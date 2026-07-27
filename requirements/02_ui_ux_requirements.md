@@ -151,3 +151,21 @@ PC（1280x720/1440x900）はCurrentとNext/Contextを2列で確認でき、iPhon
 ### 外部解析の明示
 
 Local Firstの通常相談と、ユーザーが明示的に押す「ChatGPTで深く解析」を区別する。外部送信はPreviewと確認後だけ行い、最小Context・送信先・モデル・送信対象を表示し、結果はFactへ直接確定せずExternal Reasoning/Recommendation候補として監査可能にする。
+
+## 探索・比較のSecondary Page（2026-07-27 vNext）
+
+3D Personal SpaceとPopulation Benchmarkは、Today / 相談 / 記憶 / 判断のPrimary Flowを阻害しないSecondary Experienceとして扱う。
+
+初期Navigation案:
+
+```text
+その他 / 探索
+├ 可視化（Personal Space）
+└ 比較（Benchmark）
+```
+
+PCでは3D探索やDistribution表示等の情報量を活かし、iPhoneでは要約、Filter、Node選択、Personal Marker等を優先して簡略化する。
+
+Benchmark Pageでは「自分」「比較対象」「Reference period」「Source」「乖離」を同じ視界で理解できること。平均・中央値・Percentile等のStatistic Typeを混同せず、Good / Badの価値判断色を自動付与しない。
+
+3D Personal Spaceでは遊び要素を許容するが、センシティブ本文や具体的金融値をCanvas上へ無条件表示しない。3Dが利用できない環境でも通常の検索・一覧・Domain UIから同じ情報へアクセスできること。

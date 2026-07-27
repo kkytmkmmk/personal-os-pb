@@ -66,3 +66,35 @@ Today / Consultation中心の主要導線を維持する。
 Unit Testは実DBに依存しない。
 
 Memoryを壊しやすいAdversarial Caseを継続的なRegressionとして保持する。
+
+## 11. 3D Visualization Acceptance
+
+3D Personal SpaceをDoneとするには、少なくとも以下を満たす。
+
+- Fact / Decision / Result等のObject Typeを視覚的に区別できる
+- Domain Colorが一貫し、色以外のEncodingも併用する
+- Node選択から元のFact / Decision / Evidence等へ遡れる
+- SearchまたはFilterで表示対象を絞れる
+- Reloadごとに配置が完全Randomにならない
+- Current / Historical等の状態差を理解できる
+- Sensitiveな本文・具体値をDefault Canvasへ無条件表示しない
+- 低性能・3D非対応環境でもCore Personal OSを利用できる
+
+Canvasや3Dライブラリを表示しただけではDoneにしない。
+
+## 12. Population Benchmark Acceptance
+
+Population BenchmarkをDoneとするには、少なくとも以下を満たす。
+
+- Official / high-quality Sourceから取得または正式Importする
+- Reference DataをPersonal Factとは別にLocal DBへ保持する
+- Source / Definition / Statistic Type / Population Segment / Reference Periodを追跡できる
+- Personal MetricとのDefinition Compatibilityを確認する
+- mean / median / percentile / distributionを混同しない
+- 外部SourceへPersonal Contextを送信しない
+- Refresh失敗時にLast valid referenceを保持する
+- 新しいReference Periodで過去値を削除しない
+- 少なくとも2つ以上の異なるMetricで比較UIが動作する
+- Difference / Ratio / Distribution Marker等で乖離を理解できる
+
+固定された平均値を画面に置くだけではDoneにしない。

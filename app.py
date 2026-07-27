@@ -202,6 +202,51 @@ def runtime_status() -> dict[str, object]:
     return dict(row) if row else {"running": False}
 
 
+def process_is_running(pid: int) -> bool:
+    """Return whether a recorded local PID still exists without shelling out.
+
+    An abrupt process kill cannot run the normal lease cleanup.  Windows does
+    not reliably implement ``os.kill(pid, 0)`` (it can raise ``SystemError``
+    for an otherwise ordinary stale PID), so use its process-query API there.
+    Permission failures are treated as running so we never steal a live
+    process owned by another user.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(query_limited_information, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == 5  # access denied: conservatively live
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def acquire_runtime_lease(port: int) -> tuple[bool, dict[str, object] | None]:
     """Allow one healthy Personal OS process for this database at a time."""
     global RUNTIME_LEASED
@@ -219,7 +264,8 @@ def acquire_runtime_lease(port: int) -> tuple[bool, dict[str, object] | None]:
                 stale = datetime.now(timezone.utc).astimezone() - datetime.fromisoformat(previous["heartbeat_at"])
             except ValueError:
                 stale = timedelta.max
-            if stale < timedelta(seconds=RUNTIME_LEASE_SECONDS):
+            owner_is_alive = process_is_running(int(previous["pid"]))
+            if owner_is_alive and stale < timedelta(seconds=RUNTIME_LEASE_SECONDS):
                 return False, dict(previous)
         connection.execute(
             """INSERT INTO runtime_leases(lease_name,instance_id,pid,port,started_at,heartbeat_at)
@@ -1624,6 +1670,7 @@ def initialize() -> None:
     prepare_conversation_reanalysis()
     backfill_fact_keys()
     migrate_current_truth()
+    migrate_visualization_benchmark()
     backfill_fact_evidence()
     with db() as connection:
         backfill_fact_evidence_identities(connection)
@@ -2982,6 +3029,272 @@ def migrate_current_truth() -> None:
         ).fetchall()
         for row in other_rows:
             apply_fact_timeline(connection, row["id"], log_change=False)
+
+
+BENCHMARK_STAT_TYPES = {"mean", "median", "percentile", "proportion", "count", "distribution", "index"}
+BENCHMARK_COMPATIBILITY = {"exact", "comparable", "reference_only", "incompatible"}
+BENCHMARK_FACT_KEY_ALIASES = {
+    # These aliases are intentionally narrow.  A comparison is shown only for
+    # an unambiguous total/current Fact, never for an individual holding.
+    "finance.total_assets": ("finance.total_assets", "finance.asset_balance.total_assets"),
+    "finance.monthly_investment": ("finance.monthly_investment.total",),
+    "housing.monthly_rent": ("housing.monthly_rent.total",),
+    "work.annual_income": ("work.income.total", "finance.income.annual_income"),
+}
+PERSONAL_SPACE_COLORS = {
+    "finance": "#22C55E", "travel": "#38BDF8", "housing": "#F59E0B", "relationship": "#F472B6",
+    "work": "#6366F1", "health": "#EF4444", "life": "#EAB308", "lifestyle": "#EAB308",
+    "learning": "#14B8A6", "hobby": "#A855F7", "food": "#84CC16", "shopping": "#C2410C", "other": "#94A3B8",
+}
+
+
+def migrate_visualization_benchmark() -> None:
+    """Keep public reference data separate from private facts and raw memory."""
+    backup_before_migration("012_visualization_benchmark")
+    with db() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS benchmark_sources (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, source_name TEXT NOT NULL, publisher TEXT NOT NULL,
+              source_url TEXT NOT NULL, source_type TEXT NOT NULL DEFAULT 'official', methodology TEXT NOT NULL DEFAULT '',
+              retrieval_mode TEXT NOT NULL DEFAULT 'manual_import', expected_frequency TEXT NOT NULL DEFAULT 'irregular',
+              last_checked_at TEXT, last_successful_at TEXT, usage_notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS benchmark_series (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL, metric_key TEXT NOT NULL, metric_name TEXT NOT NULL,
+              domain TEXT NOT NULL, unit TEXT NOT NULL, statistic_type TEXT NOT NULL, definition TEXT NOT NULL,
+              population_scope TEXT NOT NULL, segment_definition_json TEXT NOT NULL DEFAULT '{}', geography TEXT NOT NULL DEFAULT '',
+              frequency TEXT NOT NULL DEFAULT 'irregular', version TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(source_id) REFERENCES benchmark_sources(id),
+              UNIQUE(source_id, metric_key, statistic_type, population_scope, version)
+            );
+            CREATE TABLE IF NOT EXISTS benchmark_observations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, series_id INTEGER NOT NULL, reference_period TEXT NOT NULL, published_at TEXT,
+              value REAL, statistic_type TEXT NOT NULL, segment_values_json TEXT NOT NULL DEFAULT '{}', sample_size INTEGER,
+              distribution_json TEXT NOT NULL DEFAULT '{}', revision TEXT NOT NULL DEFAULT '', raw_reference TEXT NOT NULL DEFAULT '',
+              checksum TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL, FOREIGN KEY(series_id) REFERENCES benchmark_series(id),
+              UNIQUE(series_id, reference_period, revision, segment_values_json)
+            );
+            CREATE TABLE IF NOT EXISTS benchmark_refresh_runs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+              new_observations INTEGER NOT NULL DEFAULT 0, revised_observations INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
+              adapter_version TEXT NOT NULL DEFAULT 'manual-v1', FOREIGN KEY(source_id) REFERENCES benchmark_sources(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_benchmark_series_metric ON benchmark_series(metric_key,active);
+            CREATE INDEX IF NOT EXISTS idx_benchmark_observations_series ON benchmark_observations(series_id,reference_period DESC);
+            """
+        )
+        record_schema_migrations(connection)
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
+            ("012_visualization_benchmark", now()),
+        )
+
+
+def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
+    """Return only local reference data; no personal data leaves this process."""
+    with db() as connection:
+        sql = """SELECT s.id,s.metric_key,s.metric_name,s.domain,s.unit,s.statistic_type,s.definition,s.population_scope,
+                         s.segment_definition_json,s.geography,s.frequency,s.version,src.source_name,src.publisher,src.source_url,
+                         src.methodology,src.last_successful_at
+                  FROM benchmark_series s JOIN benchmark_sources src ON src.id=s.source_id WHERE s.active=1"""
+        params: list[object] = []
+        if metric_key:
+            sql += " AND s.metric_key=?"; params.append(metric_key)
+        series = [dict(row) for row in connection.execute(sql + " ORDER BY s.domain,s.metric_name", params)]
+        for item in series:
+            item["observations"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM benchmark_observations WHERE series_id=? ORDER BY reference_period DESC,id DESC LIMIT 24", (item["id"],)
+            )]
+            keys = BENCHMARK_FACT_KEY_ALIASES.get(item["metric_key"], (item["metric_key"],))
+            placeholders = ",".join("?" for _ in keys)
+            fact = connection.execute(
+                f"""SELECT f.id,f.fact_key,f.value_json,f.summary,f.valid_from,f.created_at
+                    FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+                    WHERE f.fact_key IN ({placeholders}) AND f.status='current' AND r.state='confirmed'
+                      AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
+                    ORDER BY COALESCE(f.valid_from,f.created_at) DESC,f.id DESC LIMIT 1""", keys,
+            ).fetchone()
+            item["personal"] = None
+            item["compatibility"] = "reference_only"
+            if fact:
+                try:
+                    fact_value = json.loads(fact["value_json"] or "{}")
+                    amount = fact_value.get("amount")
+                    amount = float(amount) if amount is not None else None
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    amount = None
+                    fact_value = {}
+                currency = str(fact_value.get("currency") or "")
+                # Currency/unit equality is required for an automatic numeric
+                # comparison.  Other definitions remain visible as reference.
+                unit_matches = bool(amount is not None and (
+                    item["unit"] == currency or (currency == "JPY" and item["unit"] in {"JPY", "円"})
+                ))
+                item["compatibility"] = "exact" if unit_matches else "incompatible"
+                item["personal"] = {"fact_id": fact["id"], "fact_key": fact["fact_key"], "value": amount,
+                                    "unit": currency, "summary": fact["summary"], "valid_from": fact["valid_from"]}
+    return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES), "privacy": "reference data stays local; personal facts are never sent to sources"}
+
+
+def _benchmark_json(value: object, field: str) -> str:
+    """Serialize a benchmark metadata object after enforcing a small, local schema."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
+    """Import documented public-reference data without contacting any external service.
+
+    Benchmark values deliberately live in their own tables.  This import path is
+    useful for a CSV/API export that the user has reviewed, and makes provenance
+    mandatory so a comparison never looks more authoritative than its source.
+    """
+    source = payload.get("source")
+    series = payload.get("series")
+    observations = payload.get("observations")
+    if not isinstance(source, dict) or not isinstance(series, dict) or not isinstance(observations, list) or not observations:
+        raise ValueError("source, series, and at least one observation are required")
+    source_name = str(source.get("source_name", "")).strip()
+    publisher = str(source.get("publisher", "")).strip()
+    source_url = str(source.get("source_url", "")).strip()
+    if not source_name or not publisher or not source_url.startswith(("https://", "http://")):
+        raise ValueError("source_name, publisher, and an http(s) source_url are required")
+    source_type = str(source.get("source_type", "official")).strip()
+    if source_type not in {"official", "quasi_official", "research", "other"}:
+        raise ValueError("source_type is invalid")
+    metric_key = str(series.get("metric_key", "")).strip()
+    metric_name = str(series.get("metric_name", "")).strip()
+    domain = str(series.get("domain", "other")).strip() or "other"
+    unit = str(series.get("unit", "")).strip()
+    definition = str(series.get("definition", "")).strip()
+    population_scope = str(series.get("population_scope", "")).strip()
+    statistic_type = str(series.get("statistic_type", "")).strip()
+    if not all((metric_key, metric_name, unit, definition, population_scope)):
+        raise ValueError("metric_key, metric_name, unit, definition, and population_scope are required")
+    if statistic_type not in BENCHMARK_STAT_TYPES:
+        raise ValueError("series statistic_type is invalid")
+    segment_definition = _benchmark_json(series.get("segment_definition"), "segment_definition")
+    timestamp = now()
+    new_observations = 0
+    revised_observations = 0
+    with db() as connection:
+        existing_source = connection.execute(
+            "SELECT id FROM benchmark_sources WHERE source_name=? AND source_url=?", (source_name, source_url)
+        ).fetchone()
+        if existing_source:
+            source_id = int(existing_source["id"])
+            connection.execute(
+                """UPDATE benchmark_sources SET publisher=?,source_type=?,methodology=?,expected_frequency=?,usage_notes=?,
+                   last_checked_at=?,last_successful_at=?,updated_at=? WHERE id=?""",
+                (publisher, source_type, str(source.get("methodology", "")), str(source.get("expected_frequency", "irregular")),
+                 str(source.get("usage_notes", "")), timestamp, timestamp, timestamp, source_id),
+            )
+        else:
+            source_id = int(connection.execute(
+                """INSERT INTO benchmark_sources(source_name,publisher,source_url,source_type,methodology,retrieval_mode,
+                   expected_frequency,last_checked_at,last_successful_at,usage_notes,created_at,updated_at)
+                   VALUES(?,?,?,?,?,'manual_import',?,?,?,?,?,?)""",
+                (source_name, publisher, source_url, source_type, str(source.get("methodology", "")),
+                 str(source.get("expected_frequency", "irregular")), timestamp, timestamp, str(source.get("usage_notes", "")), timestamp, timestamp),
+            ).lastrowid)
+        version = str(series.get("version", "")).strip()
+        row = connection.execute(
+            """SELECT id FROM benchmark_series WHERE source_id=? AND metric_key=? AND statistic_type=?
+               AND population_scope=? AND version=?""", (source_id, metric_key, statistic_type, population_scope, version)
+        ).fetchone()
+        if row:
+            series_id = int(row["id"])
+            connection.execute(
+                """UPDATE benchmark_series SET metric_name=?,domain=?,unit=?,definition=?,segment_definition_json=?,geography=?,
+                   frequency=?,active=1,updated_at=? WHERE id=?""",
+                (metric_name, domain, unit, definition, segment_definition, str(series.get("geography", "")),
+                 str(series.get("frequency", "irregular")), timestamp, series_id),
+            )
+        else:
+            series_id = int(connection.execute(
+                """INSERT INTO benchmark_series(source_id,metric_key,metric_name,domain,unit,statistic_type,definition,
+                   population_scope,segment_definition_json,geography,frequency,version,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (source_id, metric_key, metric_name, domain, unit, statistic_type, definition, population_scope,
+                 segment_definition, str(series.get("geography", "")), str(series.get("frequency", "irregular")), version, timestamp, timestamp),
+            ).lastrowid)
+        run_id = int(connection.execute(
+            "INSERT INTO benchmark_refresh_runs(source_id,status,started_at,adapter_version) VALUES(?,?,?,?)",
+            (source_id, "running", timestamp, "manual-v1"),
+        ).lastrowid)
+        for observation in observations:
+            if not isinstance(observation, dict):
+                raise ValueError("each observation must be an object")
+            period = str(observation.get("reference_period", "")).strip()
+            observation_type = str(observation.get("statistic_type", statistic_type)).strip()
+            if not period or observation_type not in BENCHMARK_STAT_TYPES:
+                raise ValueError("each observation needs reference_period and a valid statistic_type")
+            raw_value = observation.get("value")
+            if raw_value in (None, ""):
+                numeric_value = None
+            else:
+                try:
+                    numeric_value = float(raw_value)
+                except (TypeError, ValueError) as error:
+                    raise ValueError("observation value must be numeric") from error
+            segments = _benchmark_json(observation.get("segment_values"), "segment_values")
+            distribution = _benchmark_json(observation.get("distribution"), "distribution")
+            revision = str(observation.get("revision", "")).strip()
+            existing = connection.execute(
+                "SELECT id FROM benchmark_observations WHERE series_id=? AND reference_period=? AND revision=? AND segment_values_json=?",
+                (series_id, period, revision, segments),
+            ).fetchone()
+            values = (series_id, period, str(observation.get("published_at", "")).strip() or None, numeric_value, observation_type,
+                      segments, observation.get("sample_size") or None, distribution, revision, str(observation.get("raw_reference", "")),
+                      str(observation.get("checksum", "")), timestamp)
+            if existing:
+                revised_observations += 1
+                connection.execute(
+                    """UPDATE benchmark_observations SET published_at=?,value=?,statistic_type=?,sample_size=?,distribution_json=?,
+                       raw_reference=?,checksum=?,imported_at=? WHERE id=?""",
+                    (values[2], values[3], values[4], values[6], values[7], values[9], values[10], values[11], existing["id"]),
+                )
+            else:
+                new_observations += 1
+                connection.execute(
+                    """INSERT INTO benchmark_observations(series_id,reference_period,published_at,value,statistic_type,segment_values_json,
+                       sample_size,distribution_json,revision,raw_reference,checksum,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", values)
+        connection.execute(
+            "UPDATE benchmark_refresh_runs SET status='completed',finished_at=?,new_observations=?,revised_observations=? WHERE id=?",
+            (now(), new_observations, revised_observations, run_id),
+        )
+    return {"source_id": source_id, "series_id": series_id, "new_observations": new_observations,
+            "revised_observations": revised_observations, "message": "Reference data imported locally. No personal fact was transmitted."}
+
+
+def personal_space_projection(include_sensitive: bool = False, limit: int = 180) -> dict[str, object]:
+    """Stable, bounded graph payload for the Canvas/WebGL-independent renderer."""
+    with db() as connection:
+        facts = [dict(row) for row in connection.execute(
+            """SELECT f.id,f.category,f.fact_type,f.status,f.summary,f.created_at,f.valid_from,f.truth_confidence,
+                       (SELECT COUNT(*) FROM fact_evidence e WHERE e.fact_id=f.id) AS evidence_count
+                FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+                WHERE r.state='confirmed' AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
+                ORDER BY CASE f.status WHEN 'current' THEN 0 ELSE 1 END,f.created_at DESC LIMIT ?""", (limit,)
+        )]
+        decisions = [dict(row) for row in connection.execute(
+            "SELECT id,domain,title,decision_state,created_at,updated_at FROM decisions ORDER BY updated_at DESC LIMIT 60"
+        )]
+    sensitive = {"health", "relationship"}
+    nodes = []
+    for row in facts:
+        hidden = (row["category"] in sensitive or row["category"] == "finance") and not include_sensitive
+        nodes.append({"id": f"fact-{row['id']}", "kind": "fact", "domain": row["category"], "label": "Sensitive fact" if hidden else row["summary"][:90],
+                      "masked": hidden, "status": row["status"], "strength": min(1.0, 0.2 + 0.12 * row["evidence_count"] + float(row["truth_confidence"] or 0) * .45),
+                      "updated_at": row["valid_from"] or row["created_at"], "target": f"/api/facts/{row['id']}/evidence"})
+    for row in decisions:
+        nodes.append({"id": f"decision-{row['id']}", "kind": "decision", "domain": row["domain"] or "other", "label": row["title"][:90],
+                      "masked": False, "status": row["decision_state"], "strength": .82, "updated_at": row["updated_at"] or row["created_at"], "target": f"/api/decisions/{row['id']}"})
+    return {"layout_version": "personal-space-v1", "colors": PERSONAL_SPACE_COLORS, "nodes": nodes, "edges": []}
 
 
 def backfill_fact_evidence() -> int:
@@ -6543,6 +6856,7 @@ class Handler(BaseHTTPRequestHandler):
             "/styles.css": ("styles.css", "text/css; charset=utf-8"),
             "/api-client.js": ("api-client.js", "application/javascript; charset=utf-8"),
             "/app.js": ("app.js", "application/javascript; charset=utf-8"),
+            "/visualization.js": ("visualization.js", "application/javascript; charset=utf-8"),
         }
         if path in static_files:
             filename, content_type = static_files[path]
@@ -6729,6 +7043,17 @@ class Handler(BaseHTTPRequestHandler):
                        ORDER BY f.category, COALESCE(f.valid_from, f.created_at) DESC LIMIT 100"""
                 )]
             return self.send_json(rows)
+        if path == "/api/benchmarks":
+            query = parse_qs(urlparse(self.path).query)
+            return self.send_json(benchmark_projection(query.get("metric_key", [None])[0]))
+        if path == "/api/personal-space":
+            query = parse_qs(urlparse(self.path).query)
+            include_sensitive = query.get("include_sensitive", ["false"])[0].lower() == "true"
+            try:
+                limit = max(20, min(300, int(query.get("limit", [180])[0])))
+            except ValueError:
+                limit = 180
+            return self.send_json(personal_space_projection(include_sensitive, limit))
         if path == "/api/search":
             query = parse_qs(urlparse(self.path).query)
             message = query.get("q", [""])[0].strip()
@@ -7025,6 +7350,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if not self._authorize(True):
             return
+        if path == "/api/benchmarks/import":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                return self.send_json(import_benchmark_reference(payload), HTTPStatus.CREATED)
+            except (ValueError, TypeError, sqlite3.Error, json.JSONDecodeError) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/facts/auto-resolve":
             changed = auto_confirm_low_risk_facts()
             quality = audit_memory_quality()

@@ -16,6 +16,11 @@
 
 The current Done/Partial/Not implemented status is in `docs/requirements_traceability.md`, `docs/memory_correctness_traceability.md`, `docs/additional_correction_traceability.md`, and `work/requirements_status.md`. `docs/requirements_gap_analysis.md` is retained as the pre-implementation audit baseline.
 
+### Visualization and benchmarks
+
+- Population benchmarks are a separate local reference-data layer: `benchmark_sources`, `benchmark_series`, `benchmark_observations`, and `benchmark_refresh_runs`. `POST /api/benchmarks/import` accepts reviewed reference data with a source URL, definition, scope, and period. It never transmits Personal OS facts to a source and never alters `facts`.
+- **Personal Space** is a secondary, deterministic, bounded Canvas exploration view for confirmed Facts and Decisions. Health, relationship, and finance labels are masked by default; revealing them is an explicit local UI action. It is not primary navigation and does not replace search.
+
 ## Public repository release
 
 Runtime data is deliberately local-only: `data/`, exports, attachments,

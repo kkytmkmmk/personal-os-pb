@@ -15,7 +15,8 @@ Personal OSは、ユーザー自身が所有する **Personal Context Engine** �
 - `08_privacy_security_requirements.md` — Local First、外部送信、認証、削除
 - `09_personal_intelligence_requirements.md` — Personal Inference と「自分らしい判断」の要件
 - `10_external_context_requirements.md` — Calendar / Gmail / Photos等の将来連携
-- `11_visualization_requirements.md` — Timeline / Map / Decision Flow等の可視化
+- `11_visualization_requirements.md` — Timeline / Map / Decision Flow / 3D Personal Space等の可視化
+- `12_population_benchmark_requirements.md` — 公的統計のLocal DB保持、更新、世間比較・乖離可視化
 - `90_requirements_map.md` — 正本の配置・重複防止
 - `91_definition_of_done.md` — Done判定と横断Acceptance Criteria
 - `99_current_constraints.md` — 現時点の実行環境・優先順位

@@ -32,3 +32,14 @@
 - Plan→Decision候補→本人確定→Execution→Result→Later EvaluationをCycle API/UIへ接続
 - `cycle_stage` / `available_actions` と不正遷移拒否を追加
 - Todayに進行中Cycleと次のActionを表示
+
+## 2026-07-27 Visualization / Population Benchmark vNext
+
+- Visualizationを実用系だけでなく探索・遊び要素まで拡張し、3D `Personal Space / Information Universe` を正式要件化
+- Domain Color、Object Shape、Node Size、Brightness / Opacity / Glow、Edge、Stable Layout、Mobile / Accessibilityを定義
+- 3DはPrimary Flowではなく「その他 / 探索」配下のSecondary Experienceとした
+- `12_population_benchmark_requirements.md` を追加し、公的統計のLocal DB保持、Provenance、Definition Matching、Cohort Matching、Mean / Median / Distribution、乖離可視化を要件化
+- Benchmark Sourceはe-Stat / 総務省統計局、国税庁、J-FLEC、厚生労働省等のOfficial / high-quality sourceを優先
+- Benchmarkは適宜Refreshし、Reference Period / Revision履歴を保持。取得失敗時はLast valid referenceを維持
+- Benchmark取得でPersonal Contextを外部へ送らず、Population Segmentの選択・比較はLocal側で行う
+- Benchmarkを目標値・正常値として扱わず、中立的なReferenceとして表示する

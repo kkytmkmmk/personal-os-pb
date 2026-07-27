@@ -99,6 +99,8 @@
     if (canonical === 'checkin' && typeof refreshCheckins === 'function') refreshCheckins();
     if (canonical === 'review' && typeof refreshReview === 'function') refreshReview();
     if (canonical === 'visualize' && typeof refreshInsights === 'function') refreshInsights();
+    if (canonical === 'visualize' && typeof refreshPersonalSpace === 'function') refreshPersonalSpace();
+    if (canonical === 'benchmark' && typeof refreshBenchmarks === 'function') refreshBenchmarks();
     if (canonical === 'verify' && typeof refreshFactReview === 'function') refreshFactReview();
     if (canonical === 'today' && typeof refreshToday === 'function') refreshToday();
     if (canonical === 'today') refreshTodayCycleSummary();

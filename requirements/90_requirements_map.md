@@ -13,7 +13,8 @@
 | Privacy / Security / Cloud send | `08_privacy_security_requirements.md` |
 | Personal Inference / Personal Model | `09_personal_intelligence_requirements.md` |
 | External Context | `10_external_context_requirements.md` |
-| Visualization | `11_visualization_requirements.md` |
+| Visualization / 3D Personal Space | `11_visualization_requirements.md` |
+| Population Benchmark / 世間比較 / 外部統計Reference | `12_population_benchmark_requirements.md` |
 | Done判定 | `91_definition_of_done.md` |
 | 現在の技術制約 | `99_current_constraints.md` |
 | Domain固有 | `domains/` |
@@ -30,6 +31,7 @@
 - Cloud送信制御 → `08`、AI選択動作 → `05`
 - People判定の意味論 → `domains/people.md` + `03`
 - Visualizationの表示方法 → `11` + `02`
+- Population BenchmarkのSource / Definition / Update / Comparison → `12`、表示方法 → `12` + `02`
 
 ## 要件と実装を混同しない
 
