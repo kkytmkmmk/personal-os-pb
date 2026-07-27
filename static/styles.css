@@ -1,0 +1,117 @@
+/* Personal OS UI/UX vNext.  The legacy inline stylesheet remains for compatibility;
+   these rules define the adaptive shell and progressively disclosed daily UI. */
+:root {
+  --os-max-width: 1240px;
+  --os-sidebar-width: 300px;
+  --os-focus: #b8f3d3;
+}
+
+html { min-width: 0; }
+body { overflow-x: hidden; }
+main#app-main { width: min(100% - 32px, var(--os-max-width)); max-width: none; }
+.stats { margin: 12px 0; }
+.page-header { margin: 20px 0 10px; }
+.page-header h2 { margin: 0; font-size: 1.35rem; }
+.page-header p { margin: 3px 0 0; color: var(--muted); }
+.record-primary { border-color: var(--accent); }
+.record-primary textarea { min-height: 150px; }
+.record-advanced { margin-top: 12px; }
+.record-advanced summary { cursor: pointer; color: var(--muted); padding: 8px 0; }
+.record-advanced > .card { margin-left: 0; margin-right: 0; }
+.legacy-nav.admin-open { display: flex !important; position: absolute; right: 16px; z-index: 5; max-width: 520px; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+button, input, textarea, select { min-height: 44px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 3px solid var(--os-focus); outline-offset: 2px;
+}
+
+.legacy-nav { display: none; }
+.primary-nav { align-items: center; margin: 18px 0 12px; }
+.primary-nav .admin-toggle { margin-left: auto; background: #23302d; color: var(--muted); }
+.secondary-toggle { display: none !important; }
+.mobile-bottom-nav { display: none; }
+
+/* The home/Today and consultation surfaces use the available desktop width. */
+#today-overview, #today-next-candidates, #today-cycle-summary { max-width: none; }
+.today-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.today-layout, .chat-layout { display: grid; gap: 16px; }
+.today-layout { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); }
+.chat-layout { grid-template-columns: minmax(0, 7fr) minmax(240px, 3fr); }
+.chat-context { min-width: 0; }
+.chat-context:not(.is-open) .chat-context-body { display: none; }
+.context-toggle { display: inline-flex; }
+.technical-detail { color: var(--muted); font-size: .84rem; }
+.technical-detail summary { cursor: pointer; color: var(--muted); }
+
+/* Bottom sheets are used for quick capture and the mobile secondary menu. */
+.ui-sheet[hidden] { display: none !important; }
+.ui-sheet { position: fixed; inset: 0; z-index: 20; }
+.ui-sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.62); }
+.ui-sheet-panel { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: min(100%, 560px); max-height: min(80vh, 720px); overflow: auto; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); background: var(--panel); border: 1px solid var(--line); border-bottom: 0; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.3); }
+.ui-sheet-panel h2 { margin-top: 0; }
+.ui-sheet-panel > button { display: block; width: 100%; margin: 8px 0; text-align: left; }
+.ui-sheet-grabber { width: 42px; height: 4px; margin: 0 auto 14px; border-radius: 99px; background: var(--muted); opacity: .7; }
+.sheet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.sheet-grid button { width: 100%; }
+.secondary-grid button { font-size: .9rem; }
+
+/* Keep the day-to-day page focused; management cards remain reachable via admin nav. */
+#today > section.card:not(#today-overview):not(#today-next-candidates):not(#today-cycle-summary) { display: none; }
+#today-ask-form, #recommendation-panel { display: none !important; }
+.cycle-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.cycle-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 10px 0; background: #12201d; }
+.cycle-track { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 10px 0; }
+.cycle-track span { padding: 6px 3px; text-align: center; font-size: .74rem; color: var(--muted); border-bottom: 3px solid var(--line); }
+.cycle-track span.active { color: var(--accent); border-color: var(--accent); }
+.cycle-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.cycle-actions select { flex: 1 1 180px; }
+#today .analysis-detail, #today .technical-detail { font-size: .84rem; }
+
+@media (min-width: 1024px) {
+  #today { display: block; }
+  #today-overview + .card { margin-top: 0; }
+  #chat .card { max-width: none; }
+}
+
+@media (max-width: 1023px) {
+  main#app-main { width: min(100% - 24px, var(--os-max-width)); }
+  .primary-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .primary-nav button { white-space: nowrap; }
+  .today-layout, .chat-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 767px) {
+  body { padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
+  main#app-main { width: 100%; padding: 14px 12px calc(94px + env(safe-area-inset-bottom)); }
+  .stats { display: none; }
+  .memory-stats { display: grid; }
+  .primary-nav { display: none; }
+  .legacy-nav { display: none !important; }
+  .mobile-bottom-nav { position: fixed; display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; gap: 4px; left: 0; right: 0; bottom: 0; z-index: 10; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); background: rgba(16,20,20,.98); border-top: 1px solid var(--line); }
+  .mobile-bottom-nav button { min-width: 44px; width: 100%; min-height: 48px; padding: 6px 2px; border-radius: 10px; background: transparent; color: var(--muted); font-size: .78rem; }
+  .mobile-bottom-nav button.active, .mobile-bottom-nav .mobile-nav-plus { color: #072318; background: var(--accent); }
+  .mobile-bottom-nav .mobile-nav-plus { width: 52px; height: 52px; justify-self: center; border-radius: 50%; font-size: 1.6rem; line-height: 1; }
+  .today-grid { grid-template-columns: 1fr; }
+  .cycle-track { grid-template-columns: repeat(5, minmax(50px, 1fr)); overflow: hidden; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .row, .domain-grid { grid-template-columns: 1fr; }
+  .card { border-radius: 12px; }
+  #chat .card { padding: 14px; }
+  #chat-result h3 { margin-top: 18px; }
+  #chat-memories { max-height: 38vh; overflow: auto; }
+  #chat-memories.chat-context-body:not(.is-open) { display: none; }
+  .chat-context { order: 2; }
+  .ui-sheet-panel { width: 100%; }
+  .sheet-grid { grid-template-columns: 1fr 1fr; }
+  /* Keep source/technical metadata behind an explicit details toggle. */
+  .domain-fact .source.technical { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+}
+
+.diagnostics-pre{max-height:22rem;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:.78rem;background:var(--panel,#0b1413);padding:.75rem;border-radius:.5rem}
+form[data-action-state="submitting"]{opacity:.88}
+form[data-action-state="error"]{outline:1px solid #d97777}

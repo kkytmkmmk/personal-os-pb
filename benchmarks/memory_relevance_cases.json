@@ -1,0 +1,314 @@
+{
+  "version": "memory-relevance-v1",
+  "minimum_accuracy": 1.0,
+  "cases": [
+    {
+      "id": "personal-employer",
+      "fact": {"category": "work", "type": "status", "summary": "ExampleCorpで働いている", "asset": "ExampleCorp", "details": {"entity_type": "organization"}},
+      "source_text": "user: 私はExampleCorpで働いている\n\nassistant: 勤務先として記録します。",
+      "expected_entity_type": "organization",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-company-results",
+      "fact": {"category": "finance", "type": "note", "summary": "ExampleCorpの売上高", "asset": "ExampleCorp", "details": {"entity_type": "organization"}},
+      "source_text": "user: ExampleCorpの会社の売上を教えて\n\nassistant: 決算情報を説明します。",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "personal-product",
+      "fact": {"category": "lifestyle", "type": "status", "summary": "iPhoneを使っている", "asset": "iPhone", "details": {"entity_type": "product"}},
+      "source_text": "user: iPhoneを使っている",
+      "expected_entity_type": "product",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-product",
+      "fact": {"category": "technology", "type": "note", "summary": "iPhoneの製品仕様", "asset": "iPhone", "details": {"entity_type": "product"}},
+      "source_text": "user: iPhoneの製品仕様を教えて",
+      "expected_entity_type": "product",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "personal-visited-place",
+      "fact": {"category": "travel", "type": "visit", "summary": "京都へ行った", "asset": "京都", "details": {"entity_type": "place"}},
+      "source_text": "user: 先週、私は京都へ行った",
+      "expected_entity_type": "place",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-place",
+      "fact": {"category": "travel", "type": "note", "summary": "京都は日本の古都", "asset": "京都", "details": {"entity_type": "place"}},
+      "source_text": "user: 京都とはどのような場所？",
+      "expected_entity_type": "place",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "linked-travel-candidate",
+      "fact": {"category": "travel", "type": "candidate", "summary": "次の旅行候補は京都", "asset": "京都", "details": {"entity_type": "place"}},
+      "source_text": "user: 次の旅行候補として京都はどう思う？",
+      "expected_entity_type": "place",
+      "expected_relevance": "linked_context"
+    },
+    {
+      "id": "linked-housing-candidate",
+      "fact": {"category": "housing", "type": "candidate", "summary": "横浜の住居候補", "asset": "横浜", "details": {"entity_type": "place"}},
+      "source_text": "user: 引っ越し先の候補として横浜を比較して",
+      "expected_entity_type": "place",
+      "expected_relevance": "linked_context"
+    },
+    {
+      "id": "personal-stock-transaction",
+      "fact": {"category": "finance", "type": "transaction", "summary": "ExampleCorpの持株会に12345円入れた", "asset": "ExampleCorp", "amount": 12345, "details": {}},
+      "source_text": "user: 今月はExampleCorpの持株会に12,345円入れた",
+      "expected_entity_type": "asset",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-company-finance",
+      "fact": {"category": "finance", "type": "note", "summary": "企業Aの売上は980億円", "asset": "企業A", "amount": 980, "details": {"entity_type": "organization"}},
+      "source_text": "user: 企業Aの会社の売上は？",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "personal-friend",
+      "fact": {"category": "relationship", "type": "event", "summary": "友人のAさんと会った", "asset": "Aさん", "details": {}},
+      "source_text": "user: 昨日、友人のAさんと会った",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "personal-relationship-action",
+      "fact": {"category": "relationship", "type": "event", "summary": "Aさんとの交際を始めた", "asset": "Aさん", "details": {}},
+      "source_text": "user: Aさんとの交際を始めた",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-relationship-definition",
+      "fact": {"category": "relationship", "type": "note", "summary": "友人関係の一般論", "details": {}},
+      "source_text": "user: 友人関係とは一般的にどういうもの？",
+      "expected_entity_type": "person",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "fictional-relationship",
+      "fact": {"category": "relationship", "type": "note", "summary": "東北ずん子プロジェクトのキャラクター同士の仲間関係", "asset": "ずんだもん", "details": {}},
+      "source_text": "user: 東北ずん子プロジェクトのキャラクター同士の関係を教えて",
+      "expected_entity_type": "fictional_character",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "personal-health",
+      "fact": {"category": "health", "type": "event", "summary": "頭痛で受診した", "details": {}},
+      "source_text": "user: 昨日は頭痛で受診した",
+      "expected_entity_type": "unknown",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-health",
+      "fact": {"category": "health", "type": "note", "summary": "頭痛の一般的な原因", "details": {}},
+      "source_text": "user: 頭痛とは一般的に何が原因？",
+      "expected_entity_type": "unknown",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "personal-income",
+      "fact": {"category": "work", "type": "income", "summary": "年収は600万円", "amount": 600, "details": {}},
+      "source_text": "user: 年収は600万円",
+      "expected_entity_type": "unknown",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-job",
+      "fact": {"category": "work", "type": "note", "summary": "エンジニア職の概要", "details": {}},
+      "source_text": "user: エンジニアとは一般的にどんな仕事？",
+      "expected_entity_type": "unknown",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "personal-preference",
+      "fact": {"category": "hobby", "type": "preference", "summary": "野球観戦が好き", "details": {}},
+      "source_text": "user: 野球観戦が好き",
+      "expected_entity_type": "unknown",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "assistant-cannot-overwrite-user",
+      "fact": {"category": "lifestyle", "type": "status", "summary": "iPhoneを使用中", "asset": "iPhone", "details": {"entity_type": "product"}},
+      "source_text": "user: 私はiPhoneを使っている\n\nassistant: この製品の一般的な仕様も説明します。",
+      "expected_entity_type": "product",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "assistant-only-is-not-personal",
+      "fact": {"category": "technology", "type": "note", "summary": "iPhoneの仕様", "asset": "iPhone", "details": {"entity_type": "product"}},
+      "source_text": "assistant: あなたが使っている可能性がある製品です。",
+      "expected_entity_type": "product",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "explicitly-unrelated",
+      "fact": {"category": "finance", "type": "note", "summary": "会社Bの売上", "asset": "会社B", "details": {"entity_type": "organization"}},
+      "source_text": "user: 私とは関係ない会社Bの売上を一般論として教えて",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "linked-career-candidate",
+      "fact": {"category": "work", "type": "candidate", "summary": "ExampleCorpを転職先として検討", "asset": "ExampleCorp", "details": {"entity_type": "organization"}},
+      "source_text": "user: 転職先としてExampleCorpを検討している",
+      "expected_entity_type": "organization",
+      "expected_relevance": "linked_context"
+    },
+    {
+      "id": "personal-career-decision",
+      "fact": {"category": "work", "type": "decision", "summary": "ExampleCorpへの転職を決めた", "asset": "ExampleCorp", "details": {"entity_type": "organization"}},
+      "source_text": "user: ExampleCorpへの転職を決めた",
+      "expected_entity_type": "organization",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "personal-home-place",
+      "fact": {"category": "housing", "type": "status", "summary": "京都に住んでいる", "asset": "京都", "details": {"entity_type": "place"}},
+      "source_text": "user: 京都に住んでいる",
+      "expected_entity_type": "place",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "generic-weather-place",
+      "fact": {"category": "travel", "type": "note", "summary": "京都の天気", "asset": "京都", "details": {"entity_type": "place"}},
+      "source_text": "user: 京都の天気を教えて",
+      "expected_entity_type": "place",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "relationship-via-app",
+      "fact": {"category": "relationship", "type": "event", "summary": "マッチングアプリでAさんと交際を始めた", "asset": "Aさん", "details": {}},
+      "source_text": "user: マッチングアプリでAさんと交際を始めた",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "workplace-colleague",
+      "fact": {"category": "relationship", "type": "event", "summary": "会社の同僚Bさんと話した", "asset": "Bさん", "details": {}},
+      "source_text": "user: 会社の同僚Bさんと話した",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "model-personal-flag-does-not-override-company-question",
+      "fact": {"category": "finance", "type": "status", "summary": "FY2025の会社ガイダンス", "asset": "CCL", "personal_relevance": true, "details": {"entity_type": "organization"}},
+      "source_text": "user: CCLの最近の決算を教えて\n\nassistant: 会社ガイダンスを説明します。",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "model-personal-flag-does-not-turn-feature-description-into-memory",
+      "fact": {"category": "learning", "type": "note", "summary": "このシステムでは検索機能が利用可能である", "personal_relevance": true, "details": {"entity_type": "service"}},
+      "source_text": "user: このシステムで何ができる？\n\nassistant: 検索機能が利用可能です。",
+      "expected_entity_type": "service",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "implicit-personal-finance-still-promotes",
+      "fact": {"category": "finance", "type": "asset_balance", "summary": "総資産は12,345,678円", "amount": 12345678, "personal_relevance": true, "details": {}},
+      "source_text": "user: 総資産は12,345,678円",
+      "expected_entity_type": "unknown",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "adversarial-zundamon-fictional-project",
+      "fact": {"category": "relationship", "type": "note", "summary": "fictional character from a project", "asset": "Zundamon", "details": {}},
+      "source_text": "user: Zundamon is a fictional character from the Tohoku Zunko project",
+      "expected_entity_type": "fictional_character",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "adversarial-youtuber-not-person",
+      "fact": {"category": "relationship", "type": "note", "summary": "YouTuber channel information", "asset": "Example Channel", "details": {}},
+      "source_text": "user: Tell me about this YouTuber channel",
+      "expected_entity_type": "media_character",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "adversarial-openai-organization",
+      "fact": {"category": "technology", "type": "note", "summary": "OpenAI company overview", "asset": "OpenAI", "details": {}},
+      "source_text": "user: Explain the OpenAI company",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "adversarial-real-friend",
+      "fact": {"category": "relationship", "type": "event", "summary": "met my friend Alex", "asset": "Alex", "details": {}},
+      "source_text": "user: I met my friend Alex yesterday",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "ja-zundamon-video-not-person",
+      "fact": {"category": "relationship", "type": "note", "summary": "ずんだもんの動画", "asset": "ずんだもん", "details": {"entity_type": "person"}},
+      "source_text": "user: ずんだもんの動画を見た",
+      "expected_entity_type": "media_character",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "ja-doraemon-not-person",
+      "fact": {"category": "relationship", "type": "note", "summary": "ドラえもんが好き", "asset": "ドラえもん", "details": {"entity_type": "person"}},
+      "source_text": "user: ドラえもんが好き",
+      "expected_entity_type": "fictional_character",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "ja-hikakin-not-person",
+      "fact": {"category": "relationship", "type": "note", "summary": "HIKAKINの動画", "asset": "HIKAKIN", "details": {"entity_type": "person"}},
+      "source_text": "user: HIKAKINさんの動画を見た",
+      "expected_entity_type": "media_character",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "ja-openai-not-person",
+      "fact": {"category": "relationship", "type": "note", "summary": "OpenAIについて調べた", "asset": "OpenAI", "details": {"entity_type": "person"}},
+      "source_text": "user: OpenAIについて調べた",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "ja-rakuten-baseball-not-person",
+      "fact": {"category": "relationship", "type": "note", "summary": "楽天の試合を見た", "asset": "楽天", "details": {"entity_type": "person"}},
+      "source_text": "user: 楽天の試合を見た",
+      "expected_entity_type": "organization",
+      "expected_relevance": "archive_only"
+    },
+    {
+      "id": "ja-friend-tanaka-person",
+      "fact": {"category": "relationship", "type": "event", "summary": "友人の田中さんとご飯を食べた", "asset": "田中さん", "details": {"entity_type": "person"}},
+      "source_text": "user: 友人の田中さんとご飯を食べた",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "ja-colleague-yamada-person",
+      "fact": {"category": "relationship", "type": "event", "summary": "同僚の山田さんと話した", "asset": "山田さん", "details": {"entity_type": "person"}},
+      "source_text": "user: 同僚の山田さんと話した",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "ja-mother-travel-person",
+      "fact": {"category": "relationship", "type": "event", "summary": "母と旅行した", "asset": "母", "details": {"entity_type": "person"}},
+      "source_text": "user: 母と旅行した",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    },
+    {
+      "id": "ja-line-person",
+      "fact": {"category": "relationship", "type": "event", "summary": "AさんからLINEが来た", "asset": "Aさん", "details": {"entity_type": "person"}},
+      "source_text": "user: AさんからLINEが来た",
+      "expected_entity_type": "person",
+      "expected_relevance": "personal"
+    }
+  ]
+}
