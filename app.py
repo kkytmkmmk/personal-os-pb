@@ -3456,6 +3456,111 @@ def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
             "revised_observations": revised_observations, "message": "Reference data imported locally. No personal fact was transmitted."}
 
 
+def _validate_benchmark_dataset(dataset: dict[str, object]) -> None:
+    """Shared preview/write validation.  It must be strict before any write."""
+    source, series, observations = dataset.get("source"), dataset.get("series"), dataset.get("observations")
+    if not isinstance(source, dict) or not isinstance(series, dict) or not isinstance(observations, list) or not observations:
+        raise ValueError("Each dataset requires source, series, and observations")
+    source_type = str(source.get("source_type", "official")).strip()
+    if source_type not in {"official", "quasi_official", "research", "other", "sample"}:
+        raise ValueError("source_type is invalid")
+    if not str(source.get("source_name", "")).strip() or not str(source.get("publisher", "")).strip() or not str(source.get("source_url", "")).startswith(("https://", "http://")):
+        raise ValueError("Each dataset requires source name, publisher and an http(s) source_url")
+    for field in ("metric_key", "metric_name", "unit", "statistic_type", "definition", "population_scope"):
+        if not str(series.get(field, "")).strip():
+            raise ValueError("Each series requires metric key/name, unit, statistic type, definition, and population scope")
+    if str(series["statistic_type"]) not in BENCHMARK_STAT_TYPES:
+        raise ValueError("Unsupported statistic_type")
+    benchmark_metric_contract(str(series["metric_key"]), series.get("metric_contract"))
+    _benchmark_json(series.get("segment_definition"), "segment_definition")
+    seen: set[tuple[str, str, str]] = set()
+    for item in observations:
+        if not isinstance(item, dict) or not str(item.get("reference_period", "")).strip():
+            raise ValueError("Every observation requires reference_period")
+        if str(item.get("statistic_type", series["statistic_type"])) not in BENCHMARK_STAT_TYPES:
+            raise ValueError("observation statistic_type is invalid")
+        if item.get("value") not in (None, ""):
+            try:
+                float(item["value"])
+            except (TypeError, ValueError) as error:
+                raise ValueError("observation value must be numeric") from error
+        sample_size = item.get("sample_size")
+        if sample_size not in (None, "") and (not isinstance(sample_size, int) or isinstance(sample_size, bool) or sample_size <= 0):
+            raise ValueError("sample_size must be a positive integer")
+        distribution = _json_object(item.get("distribution"))
+        if item.get("distribution") is not None and not isinstance(item.get("distribution"), dict):
+            raise ValueError("distribution must be an object")
+        if distribution:
+            values = []
+            for key in ("p10", "p25", "p50", "p75", "p90"):
+                if key in distribution:
+                    try:
+                        values.append(float(distribution[key]))
+                    except (TypeError, ValueError) as error:
+                        raise ValueError("distribution percentiles must be numeric") from error
+            if values and values != sorted(values):
+                raise ValueError("distribution percentiles must be ordered")
+        _benchmark_json(item.get("segment_values"), "segment_values")
+        key = (str(item["reference_period"]), str(item.get("revision", "")), _benchmark_json(item.get("segment_values"), "segment_values"))
+        if key in seen:
+            raise ValueError("duplicate observation in dataset")
+        seen.add(key)
+
+
+def _import_benchmark_reference_write(connection: sqlite3.Connection, payload: dict[str, object], channel: str) -> dict[str, object]:
+    """Write a validated dataset into the caller's transaction."""
+    _validate_benchmark_dataset(payload)
+    source, series, observations = payload["source"], payload["series"], payload["observations"]
+    assert isinstance(source, dict) and isinstance(series, dict) and isinstance(observations, list)
+    source_name, publisher, source_url = str(source["source_name"]).strip(), str(source["publisher"]).strip(), str(source["source_url"]).strip()
+    source_type = str(source.get("source_type", "official")).strip()
+    metric_key, statistic_type = str(series["metric_key"]).strip(), str(series["statistic_type"]).strip()
+    metric_contract = _benchmark_json(benchmark_metric_contract(metric_key, series.get("metric_contract")), "metric_contract")
+    timestamp = now()
+    existing_source = connection.execute("SELECT id FROM benchmark_sources WHERE source_name=? AND source_url=?", (source_name, source_url)).fetchone()
+    is_demo = int(source_type == "sample")
+    if existing_source:
+        source_id = int(existing_source["id"])
+        connection.execute("""UPDATE benchmark_sources SET publisher=?,source_type=?,methodology=?,expected_frequency=?,usage_notes=?,last_checked_at=?,last_successful_at=?,is_demo=?,import_channel=?,updated_at=? WHERE id=?""",
+                           (publisher, source_type, str(source.get("methodology", "")), str(source.get("expected_frequency", "irregular")), str(source.get("usage_notes", "")), timestamp, timestamp, is_demo, channel, timestamp, source_id))
+    else:
+        source_id = int(connection.execute("""INSERT INTO benchmark_sources(source_name,publisher,source_url,source_type,methodology,retrieval_mode,expected_frequency,last_checked_at,last_successful_at,usage_notes,is_demo,import_channel,created_at,updated_at) VALUES(?,?,?,?,?,'manual_import',?,?,?,?,?,?,?,?)""",
+                                           (source_name, publisher, source_url, source_type, str(source.get("methodology", "")), str(source.get("expected_frequency", "irregular")), timestamp, timestamp, str(source.get("usage_notes", "")), is_demo, channel, timestamp, timestamp)).lastrowid)
+    version = str(series.get("version", "")).strip()
+    population_scope = str(series["population_scope"]).strip()
+    row = connection.execute("SELECT id FROM benchmark_series WHERE source_id=? AND metric_key=? AND statistic_type=? AND population_scope=? AND version=?", (source_id, metric_key, statistic_type, population_scope, version)).fetchone()
+    values = (str(series["metric_name"]).strip(), str(series.get("domain", "other")).strip() or "other", str(series["unit"]).strip(), str(series["definition"]).strip(), _benchmark_json(series.get("segment_definition"), "segment_definition"), metric_contract, str(series.get("geography", "")), str(series.get("frequency", "irregular")), timestamp)
+    if row:
+        series_id = int(row["id"])
+        connection.execute("UPDATE benchmark_series SET metric_name=?,domain=?,unit=?,definition=?,segment_definition_json=?,metric_contract_json=?,geography=?,frequency=?,active=1,updated_at=? WHERE id=?", (*values, series_id))
+    else:
+        series_id = int(connection.execute("""INSERT INTO benchmark_series(source_id,metric_key,metric_name,domain,unit,statistic_type,definition,population_scope,segment_definition_json,metric_contract_json,geography,frequency,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                           (source_id, metric_key, values[0], values[1], values[2], statistic_type, values[3], population_scope, values[4], values[5], values[6], values[7], version, timestamp, timestamp)).lastrowid)
+    run_id = int(connection.execute("INSERT INTO benchmark_refresh_runs(source_id,status,started_at,adapter_version) VALUES(?,?,?,?)", (source_id, "running", timestamp, "manual-v1")).lastrowid)
+    created = revised = 0
+    for observation in observations:
+        assert isinstance(observation, dict)
+        period, revision = str(observation["reference_period"]).strip(), str(observation.get("revision", "")).strip()
+        segments = _benchmark_json(observation.get("segment_values"), "segment_values")
+        existing = connection.execute("SELECT id FROM benchmark_observations WHERE series_id=? AND reference_period=? AND revision=? AND segment_values_json=?", (series_id, period, revision, segments)).fetchone()
+        row_values = (series_id, period, str(observation.get("published_at", "")).strip() or None, float(observation["value"]) if observation.get("value") not in (None, "") else None, str(observation.get("statistic_type", statistic_type)).strip(), segments, observation.get("sample_size") or None, _benchmark_json(observation.get("distribution"), "distribution"), revision, str(observation.get("raw_reference", "")), str(observation.get("checksum", "")), timestamp)
+        if existing:
+            revised += 1
+            connection.execute("UPDATE benchmark_observations SET published_at=?,value=?,statistic_type=?,sample_size=?,distribution_json=?,raw_reference=?,checksum=?,imported_at=? WHERE id=?", (row_values[2], row_values[3], row_values[4], row_values[6], row_values[7], row_values[9], row_values[10], row_values[11], existing["id"]))
+        else:
+            created += 1
+            connection.execute("INSERT INTO benchmark_observations(series_id,reference_period,published_at,value,statistic_type,segment_values_json,sample_size,distribution_json,revision,raw_reference,checksum,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", row_values)
+    connection.execute("UPDATE benchmark_refresh_runs SET status='completed',finished_at=?,new_observations=?,revised_observations=? WHERE id=?", (now(), created, revised, run_id))
+    return {"source_id": source_id, "series_id": series_id, "new_observations": created, "revised_observations": revised}
+
+
+def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
+    """Import one reference dataset using the same validation as Bundle preview/save."""
+    with db() as connection:
+        result = _import_benchmark_reference_write(connection, payload, "manual")
+    return {**result, "message": "Reference data imported locally. No personal fact was transmitted."}
+
+
 def parse_benchmark_bundle(raw_payload: object) -> list[dict[str, object]]:
     """Accept a legacy one-dataset payload or a fenced multi-dataset Bundle."""
     if isinstance(raw_payload, str):
@@ -3486,15 +3591,9 @@ def validate_benchmark_bundle(raw_payload: object) -> dict[str, object]:
     metrics: list[str] = []
     observations = 0
     for dataset in datasets:
-        source, series, items = dataset.get("source"), dataset.get("series"), dataset.get("observations")
-        if not isinstance(source, dict) or not isinstance(series, dict) or not isinstance(items, list) or not items:
-            raise ValueError("Each dataset requires source, series, and observations")
-        if not str(source.get("publisher", "")).strip() or not str(source.get("source_url", "")).startswith(("https://", "http://")):
-            raise ValueError("Each dataset requires publisher and an http(s) source_url")
-        if not all(str(series.get(field, "")).strip() for field in ("metric_key", "metric_name", "unit", "statistic_type", "definition", "population_scope")):
-            raise ValueError("Each series requires metric key/name, unit, statistic type, definition, and population scope")
-        if str(series.get("statistic_type")) not in BENCHMARK_STAT_TYPES:
-            raise ValueError("Unsupported statistic_type")
+        _validate_benchmark_dataset(dataset)
+        source, series, items = dataset["source"], dataset["series"], dataset["observations"]
+        assert isinstance(source, dict) and isinstance(series, dict) and isinstance(items, list)
         if str(source.get("source_type", "official")) == "sample":
             warnings.append(f"{series.get('metric_name')}: demo data")
         if not isinstance(series.get("segment_definition", {}), dict):
@@ -3508,15 +3607,13 @@ def validate_benchmark_bundle(raw_payload: object) -> dict[str, object]:
 
 
 def import_benchmark_bundle(raw_payload: object, channel: str = "manual") -> dict[str, object]:
-    """Validate first, then import a Bundle. Invalid input produces no writes."""
+    """Validate every dataset, then write all datasets in one SQLite transaction."""
     preview = validate_benchmark_bundle(raw_payload)
+    datasets = preview.pop("payload")
     results = []
-    for dataset in preview.pop("payload"):
-        result = import_benchmark_reference(dataset)
-        results.append(result)
-        if str(dataset.get("source", {}).get("source_type", "")) == "sample":
-            with db() as connection:
-                connection.execute("UPDATE benchmark_sources SET is_demo=1,import_channel=? WHERE id=?", (channel, result["source_id"]))
+    with db() as connection:
+        for dataset in datasets:
+            results.append(_import_benchmark_reference_write(connection, dataset, channel))
     return {"datasets": len(results), "new_observations": sum(int(item["new_observations"]) for item in results),
             "revised_observations": sum(int(item["revised_observations"]) for item in results), "warnings": preview["warnings"]}
 

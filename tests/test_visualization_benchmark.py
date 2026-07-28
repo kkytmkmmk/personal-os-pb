@@ -91,6 +91,25 @@ class VisualizationBenchmarkTests(unittest.TestCase):
         self.assertEqual(app.normalize_benchmark_value(180000, "円", "JPY"), (180000.0, "JPY"))
         self.assertEqual(app.normalize_benchmark_value(18, "mystery", "JPY"), (None, None))
 
+    def test_bundle_validation_rolls_back_all_datasets_and_decodes_distribution(self):
+        with isolated_personal_os():
+            bundle = {"datasets": [
+                {"source":{"source_name":"A","publisher":"P","source_url":"https://example.test/a"},"series":{"metric_key":"life.sleep_duration","metric_name":"Sleep","domain":"life","unit":"hours","statistic_type":"median","definition":"sleep","population_scope":"people","segment_definition":{}},"observations":[{"reference_period":"2025","value":7,"distribution":{"p10":5,"p25":6,"p50":7,"p75":8,"p90":9}}]},
+                {"source":{"source_name":"B","publisher":"P","source_url":"https://example.test/b"},"series":{"metric_key":"housing.monthly_rent","metric_name":"Rent","domain":"housing","unit":"JPY","statistic_type":"median","definition":"rent","population_scope":"people","segment_definition":{}},"observations":[{"reference_period":"2025","value":"not-a-number"}]},
+            ]}
+            with self.assertRaises(ValueError):
+                app.import_benchmark_bundle(bundle)
+            self.assertEqual(app.benchmark_projection()["series"], [])
+            bundle["datasets"][1]["observations"][0]["value"] = 90000
+            app.import_benchmark_bundle(bundle)
+            observation = app.benchmark_projection("life.sleep_duration")["series"][0]["observations"][0]
+            self.assertEqual(observation["distribution"]["p50"], 7)
+            self.assertNotIn("distribution_json", observation)
+
+    def test_percentile_band_never_falls_back_to_a_fake_marker(self):
+        self.assertEqual(app.benchmark_percentile_band({"p10": 10, "p25": 20, "p50": 30, "p75": 40, "p90": 50}, 42), "p75_p90")
+        self.assertIsNone(app.benchmark_percentile_band({"p50": 30}, 32))
+
     def test_personal_space_masks_sensitive_domains_by_default(self):
         with isolated_personal_os():
             with app.db() as connection:
