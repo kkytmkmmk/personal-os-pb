@@ -56,7 +56,7 @@ class VisualizationBenchmarkTests(unittest.TestCase):
                     """INSERT INTO facts(document_id,category,fact_type,fact_key,value_json,summary,confidence,extractor,
                        created_at,status,retrieval_eligibility,truth_confidence,personal_relevance,subject_scope)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 9800000, "currency": "JPY", "details": {"subject_scope": "individual"}}',
+                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 9800000, "currency": "JPY", "details": {"benchmark_contract": {"metric_key": "finance.total_assets", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"}}}',
                      "current total assets", .98, "test", timestamp, "current", "eligible", .98, "personal", "individual"),
                 ).lastrowid
                 connection.execute("INSERT INTO fact_reviews(fact_id,state,reviewed_at,created_at) VALUES(?,?,?,?)", (fact_id, "confirmed", timestamp, timestamp))
@@ -68,6 +68,28 @@ class VisualizationBenchmarkTests(unittest.TestCase):
             series = app.benchmark_projection("finance.total_assets")["series"][0]
             self.assertEqual(series["compatibility"], "exact")
             self.assertEqual(series["personal"]["fact_id"], fact_id)
+
+    def test_comparison_requires_statistical_contract_not_subject_scope(self):
+        with isolated_personal_os():
+            timestamp = app.now()
+            with app.db() as connection:
+                document_id = connection.execute("INSERT INTO documents(title,source,source_created_at,ingested_at,created_at,updated_at) VALUES(?,?,?,?,?,?)", ("source", "manual", timestamp, timestamp, timestamp, timestamp)).lastrowid
+                fact_id = connection.execute(
+                    """INSERT INTO facts(document_id,category,fact_type,fact_key,value_json,summary,confidence,extractor,created_at,status,retrieval_eligibility,truth_confidence,personal_relevance,subject_scope)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 1000, "currency": "JPY"}', "assets", .99, "test", timestamp, "current", "eligible", .99, "personal", "self"),
+                ).lastrowid
+                connection.execute("INSERT INTO fact_reviews(fact_id,state,reviewed_at,created_at) VALUES(?,?,?,?)", (fact_id, "confirmed", timestamp, timestamp))
+            app.import_benchmark_reference({"source":{"source_name":"R","publisher":"P","source_url":"https://example.test/r"},"series":{"metric_key":"finance.total_assets","metric_name":"Assets","domain":"finance","unit":"JPY","statistic_type":"median","definition":"assets","population_scope":"people","segment_definition":{"subject_scope":"individual"}},"observations":[{"reference_period":"2025","value":500}]})
+            comparison = app.benchmark_projection("finance.total_assets")["series"][0]["comparison"]
+            self.assertEqual(comparison["compatibility"], "reference_only")
+            self.assertIsNone(comparison.get("absolute_difference"))
+            self.assertIn("personal_contract_missing", {reason["code"] for reason in comparison["reasons"]})
+
+    def test_normalizes_explicit_monetary_units_and_rejects_unknown_units(self):
+        self.assertEqual(app.normalize_benchmark_value(18, "万円", "JPY"), (180000.0, "JPY"))
+        self.assertEqual(app.normalize_benchmark_value(180000, "円", "JPY"), (180000.0, "JPY"))
+        self.assertEqual(app.normalize_benchmark_value(18, "mystery", "JPY"), (None, None))
 
     def test_personal_space_masks_sensitive_domains_by_default(self):
         with isolated_personal_os():

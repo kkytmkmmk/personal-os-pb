@@ -3037,6 +3037,73 @@ BENCHMARK_COMPATIBILITY = {"exact", "comparable", "reference_only", "incompatibl
 # total assets and financial assets (or individual and household measures).
 # Add a new key only after its full definition/scope contract is reviewed.
 BENCHMARK_FACT_KEY_ALIASES: dict[str, tuple[str, ...]] = {}
+# Subject scope describes a Personal OS fact (self, asset, person, ...).  It is
+# intentionally not a proxy for a statistic's population unit.  A comparison
+# is only numeric when both sides carry this explicit contract.
+BENCHMARK_METRIC_CONTRACTS: dict[str, dict[str, object]] = {
+    "finance.total_assets": {"fact_keys": ("finance.total_assets",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
+    "finance.financial_assets": {"fact_keys": ("finance.financial_assets",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
+    "work.annual_income": {"fact_keys": ("work.annual_income",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "annual"},
+    "housing.monthly_rent": {"fact_keys": ("housing.monthly_rent",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "monthly"},
+    "life.sleep_duration": {"fact_keys": ("life.sleep_duration",), "canonical_unit": "hours", "statistical_unit": "individual", "measurement_kind": "duration", "time_basis": "daily"},
+}
+BENCHMARK_CONTRACT_FIELDS = ("metric_key", "statistical_unit", "measurement_kind", "time_basis", "canonical_unit")
+
+
+def _json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return dict(decoded) if isinstance(decoded, dict) else {}
+
+
+def benchmark_metric_contract(metric_key: str, supplied: object = None) -> dict[str, object]:
+    """Return a complete, reviewed contract or reject an underspecified one."""
+    contract = dict(BENCHMARK_METRIC_CONTRACTS.get(metric_key, {}))
+    contract.update(_json_object(supplied))
+    contract["metric_key"] = str(contract.get("metric_key") or metric_key)
+    if not contract.get("fact_keys"):
+        contract["fact_keys"] = (metric_key,)
+    missing = [field for field in BENCHMARK_CONTRACT_FIELDS if not str(contract.get(field, "")).strip()]
+    if missing:
+        raise ValueError("metric contract requires " + ", ".join(missing))
+    return contract
+
+
+def normalize_benchmark_value(value: object, unit: object, canonical_unit: object) -> tuple[float | None, str | None]:
+    """Normalize only an explicit unit; guessing units makes comparisons unsafe."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None, None
+    source = str(unit or "").strip().lower()
+    target = str(canonical_unit or "").strip().lower()
+    money = {"jpy": 1.0, "円": 1.0, "¥": 1.0, "万円": 10000.0, "万": 10000.0, "億円": 100000000.0, "億": 100000000.0}
+    duration = {"hours": 1.0, "hour": 1.0, "h": 1.0, "時間": 1.0, "minutes": 1 / 60, "minute": 1 / 60, "min": 1 / 60, "分": 1 / 60}
+    factors = money if target == "jpy" else duration if target == "hours" else {target: 1.0}
+    if source not in factors:
+        return None, None
+    return numeric * factors[source], str(canonical_unit)
+
+
+def benchmark_percentile_band(distribution: object, personal_value: object) -> str | None:
+    """Return a band, never a fabricated percentile point."""
+    points = _json_object(distribution)
+    required = ("p10", "p25", "p50", "p75", "p90")
+    try:
+        values = [float(points[key]) for key in required]
+        personal = float(personal_value)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if values != sorted(values):
+        return None
+    labels = ("below_p10", "p10_p25", "p25_p50", "p50_p75", "p75_p90", "above_p90")
+    return next((labels[index] for index, boundary in enumerate(values) if personal < boundary), labels[-1])
 PERSONAL_SPACE_COLORS = {
     "finance": "#22C55E", "travel": "#38BDF8", "housing": "#F59E0B", "relationship": "#F472B6",
     "work": "#6366F1", "health": "#EF4444", "life": "#EAB308", "lifestyle": "#EAB308",
@@ -3061,6 +3128,7 @@ def migrate_visualization_benchmark() -> None:
               id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL, metric_key TEXT NOT NULL, metric_name TEXT NOT NULL,
               domain TEXT NOT NULL, unit TEXT NOT NULL, statistic_type TEXT NOT NULL, definition TEXT NOT NULL,
               population_scope TEXT NOT NULL, segment_definition_json TEXT NOT NULL DEFAULT '{}', geography TEXT NOT NULL DEFAULT '',
+              metric_contract_json TEXT NOT NULL DEFAULT '{}',
               frequency TEXT NOT NULL DEFAULT 'irregular', version TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(source_id) REFERENCES benchmark_sources(id),
               UNIQUE(source_id, metric_key, statistic_type, population_scope, version)
@@ -3086,6 +3154,9 @@ def migrate_visualization_benchmark() -> None:
             connection.execute("ALTER TABLE benchmark_sources ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
         if "import_channel" not in source_columns:
             connection.execute("ALTER TABLE benchmark_sources ADD COLUMN import_channel TEXT NOT NULL DEFAULT 'manual'")
+        series_columns = {row["name"] for row in connection.execute("PRAGMA table_info(benchmark_series)")}
+        if "metric_contract_json" not in series_columns:
+            connection.execute("ALTER TABLE benchmark_series ADD COLUMN metric_contract_json TEXT NOT NULL DEFAULT '{}'")
         record_schema_migrations(connection)
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
@@ -3169,6 +3240,87 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
     return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES), "privacy": "reference data stays local; personal facts are never sent to sources"}
 
 
+def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
+    """Project local benchmark data with an explicit, conservative comparison contract."""
+    with db() as connection:
+        sql = """SELECT s.id,s.metric_key,s.metric_name,s.domain,s.unit,s.statistic_type,s.definition,s.population_scope,
+                         s.segment_definition_json,s.metric_contract_json,s.geography,s.frequency,s.version,src.source_name,src.publisher,src.source_url,
+                         src.source_type,src.methodology,src.expected_frequency,src.last_checked_at,src.last_successful_at,src.is_demo,src.import_channel
+                  FROM benchmark_series s JOIN benchmark_sources src ON src.id=s.source_id WHERE s.active=1"""
+        params: list[object] = []
+        if metric_key:
+            sql += " AND s.metric_key=?"; params.append(metric_key)
+        series = [dict(row) for row in connection.execute(sql + " ORDER BY s.domain,s.metric_name", params)]
+        for item in series:
+            item["segment_definition"] = _json_object(item.pop("segment_definition_json", "{}"))
+            try:
+                contract = benchmark_metric_contract(str(item["metric_key"]), item.pop("metric_contract_json", "{}"))
+            except ValueError:
+                contract = {}
+            item["metric_contract"] = contract
+            observations = [dict(row) for row in connection.execute(
+                "SELECT * FROM benchmark_observations WHERE series_id=? ORDER BY reference_period DESC,id DESC LIMIT 24", (item["id"],)
+            )]
+            for observation in observations:
+                observation["distribution"] = _json_object(observation.pop("distribution_json", "{}"))
+                observation["segment_values"] = _json_object(observation.pop("segment_values_json", "{}"))
+            item["observations"] = observations
+            item["personal"] = None
+            item["compatibility"] = "reference_only"
+            item["comparison"] = {"compatibility": "reference_only", "reasons": [{"code": "no_confirmed_current_fact"}]}
+            if not contract:
+                continue
+            keys = tuple(contract.get("fact_keys") or (item["metric_key"],))
+            fact = connection.execute(
+                f"""SELECT f.id,f.fact_key,f.value_json,f.summary,f.valid_from,f.created_at,f.subject_scope
+                    FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+                    WHERE f.fact_key IN ({','.join('?' for _ in keys)}) AND f.status='current' AND r.state='confirmed'
+                      AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
+                    ORDER BY COALESCE(f.valid_from,f.created_at) DESC,f.id DESC LIMIT 1""", keys,
+            ).fetchone()
+            if not fact:
+                continue
+            fact_value = _json_object(fact["value_json"])
+            details = fact_value.get("details") if isinstance(fact_value.get("details"), dict) else {}
+            fact_contract = _json_object(details.get("benchmark_contract"))
+            amount = fact_value.get("amount")
+            unit = str(fact_value.get("currency") or fact_value.get("unit") or "")
+            reasons: list[dict[str, object]] = []
+            if not fact_contract:
+                reasons.append({"code": "personal_contract_missing", "subject_scope": fact["subject_scope"] or "unknown"})
+            for field in ("metric_key", "statistical_unit", "measurement_kind", "time_basis"):
+                expected, actual = contract.get(field), fact_contract.get(field)
+                if expected and actual and str(expected) != str(actual):
+                    reasons.append({"code": f"{field}_mismatch", "personal": actual, "reference": expected})
+                elif expected and not actual:
+                    reasons.append({"code": f"{field}_unverified", "reference": expected})
+            canonical_unit = contract["canonical_unit"]
+            personal_value, _ = normalize_benchmark_value(amount, unit, canonical_unit)
+            latest = observations[0] if observations else {}
+            reference_value, _ = normalize_benchmark_value(latest.get("value"), item["unit"], canonical_unit)
+            if amount is not None and personal_value is None:
+                reasons.append({"code": "personal_unit_unverified", "personal": unit or None, "reference": canonical_unit})
+            if latest.get("value") is not None and reference_value is None:
+                reasons.append({"code": "reference_unit_unverified", "reference": item["unit"], "canonical": canonical_unit})
+            incompatible = any(str(reason["code"]).endswith("_mismatch") for reason in reasons)
+            compatibility = "incompatible" if incompatible else "reference_only" if reasons else (
+                "exact" if unit.lower() == str(item["unit"]).lower() else "comparable"
+            )
+            item["compatibility"] = compatibility
+            item["personal"] = {"fact_id": fact["id"], "fact_key": fact["fact_key"], "value": amount, "unit": unit,
+                                "summary": fact["summary"], "valid_from": fact["valid_from"], "contract": fact_contract}
+            comparison: dict[str, object] = {"compatibility": compatibility, "personal_value": personal_value,
+                                             "reference_value": reference_value, "unit": canonical_unit, "reasons": reasons}
+            if compatibility in {"exact", "comparable"} and personal_value is not None and reference_value is not None:
+                comparison.update({"absolute_difference": personal_value - reference_value,
+                                   "ratio": personal_value / reference_value if reference_value else None,
+                                   "percentage_difference": (personal_value - reference_value) / reference_value if reference_value else None,
+                                   "percentile_band": benchmark_percentile_band(latest.get("distribution"), personal_value)})
+            item["comparison"] = comparison
+    return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES),
+            "privacy": "Reference data stays local. Personal facts are never sent to sources; demo data is excluded from consultation context."}
+
+
 def _benchmark_json(value: object, field: str) -> str:
     """Serialize a benchmark metadata object after enforcing a small, local schema."""
     if value is None:
@@ -3209,6 +3361,7 @@ def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
         raise ValueError("metric_key, metric_name, unit, definition, and population_scope are required")
     if statistic_type not in BENCHMARK_STAT_TYPES:
         raise ValueError("series statistic_type is invalid")
+    metric_contract = benchmark_metric_contract(metric_key, series.get("metric_contract"))
     segment_definition = _benchmark_json(series.get("segment_definition"), "segment_definition")
     timestamp = now()
     new_observations = 0
@@ -3241,18 +3394,18 @@ def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
         if row:
             series_id = int(row["id"])
             connection.execute(
-                """UPDATE benchmark_series SET metric_name=?,domain=?,unit=?,definition=?,segment_definition_json=?,geography=?,
+                """UPDATE benchmark_series SET metric_name=?,domain=?,unit=?,definition=?,segment_definition_json=?,metric_contract_json=?,geography=?,
                    frequency=?,active=1,updated_at=? WHERE id=?""",
-                (metric_name, domain, unit, definition, segment_definition, str(series.get("geography", "")),
+                (metric_name, domain, unit, definition, segment_definition, _benchmark_json(metric_contract, "metric_contract"), str(series.get("geography", "")),
                  str(series.get("frequency", "irregular")), timestamp, series_id),
             )
         else:
             series_id = int(connection.execute(
                 """INSERT INTO benchmark_series(source_id,metric_key,metric_name,domain,unit,statistic_type,definition,
-                   population_scope,segment_definition_json,geography,frequency,version,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   population_scope,segment_definition_json,metric_contract_json,geography,frequency,version,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (source_id, metric_key, metric_name, domain, unit, statistic_type, definition, population_scope,
-                 segment_definition, str(series.get("geography", "")), str(series.get("frequency", "irregular")), version, timestamp, timestamp),
+                 segment_definition, _benchmark_json(metric_contract, "metric_contract"), str(series.get("geography", "")), str(series.get("frequency", "irregular")), version, timestamp, timestamp),
             ).lastrowid)
         run_id = int(connection.execute(
             "INSERT INTO benchmark_refresh_runs(source_id,status,started_at,adapter_version) VALUES(?,?,?,?)",
