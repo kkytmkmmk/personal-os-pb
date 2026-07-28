@@ -34,9 +34,11 @@ repository.
 
 ## GitHub Actions mirror
 
-The private repository contains a manually triggered workflow named **Publish
-Public Mirror**. It never runs on a normal push, pull request, or schedule.
-Before its first non-dry run, create an environment named `public-release` and
+The private repository is the only source of truth. Each push to its `master`
+branch automatically starts the **Publish Public Mirror** workflow. The public
+repository is a generated, sanitized mirror and must never be developed in
+directly. Manual dispatch remains available for an explicit dry-run. Before
+the first automatic publish, create an environment named `public-release` and
 set `PUBLIC_REPO_TOKEN` there. Use a fine-grained GitHub token limited to the
 public mirror repository with only **Contents: Read and write** and **Metadata:
 Read** permissions.

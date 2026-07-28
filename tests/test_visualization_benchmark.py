@@ -54,15 +54,15 @@ class VisualizationBenchmarkTests(unittest.TestCase):
                 ).lastrowid
                 fact_id = connection.execute(
                     """INSERT INTO facts(document_id,category,fact_type,fact_key,value_json,summary,confidence,extractor,
-                       created_at,status,retrieval_eligibility,truth_confidence,personal_relevance)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 9800000, "currency": "JPY"}',
-                     "current total assets", .98, "test", timestamp, "current", "eligible", .98, "personal"),
+                       created_at,status,retrieval_eligibility,truth_confidence,personal_relevance,subject_scope)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 9800000, "currency": "JPY", "details": {"subject_scope": "individual"}}',
+                     "current total assets", .98, "test", timestamp, "current", "eligible", .98, "personal", "individual"),
                 ).lastrowid
                 connection.execute("INSERT INTO fact_reviews(fact_id,state,reviewed_at,created_at) VALUES(?,?,?,?)", (fact_id, "confirmed", timestamp, timestamp))
             app.import_benchmark_reference({
                 "source": {"source_name": "Official sample", "publisher": "Statistics office", "source_url": "https://example.test/source"},
-                "series": {"metric_key": "finance.total_assets", "metric_name": "Financial assets", "domain": "finance", "unit": "JPY", "statistic_type": "median", "definition": "household financial assets", "population_scope": "sample population"},
+                "series": {"metric_key": "finance.total_assets", "metric_name": "Financial assets", "domain": "finance", "unit": "JPY", "statistic_type": "median", "definition": "individual total assets", "population_scope": "sample population", "segment_definition": {"subject_scope": "individual"}},
                 "observations": [{"reference_period": "2025", "value": 4100000}],
             })
             series = app.benchmark_projection("finance.total_assets")["series"][0]
@@ -92,6 +92,36 @@ class VisualizationBenchmarkTests(unittest.TestCase):
             unmasked = app.personal_space_projection(include_sensitive=True)
             node = next(item for item in unmasked["nodes"] if item["id"] == f"fact-{fact_id}")
             self.assertFalse(node["masked"])
+
+    def test_fenced_bundle_validates_before_import_and_imports_all_datasets(self):
+        with isolated_personal_os():
+            raw = """```json
+            {"bundle_version":"1","datasets":[
+              {"source":{"source_name":"A","publisher":"P","source_url":"https://example.test/a"},"series":{"metric_key":"life.sleep_duration","metric_name":"Sleep","domain":"life","unit":"hours","statistic_type":"mean","definition":"duration","population_scope":"individuals","segment_definition":{"subject_scope":"individual"}},"observations":[{"reference_period":"2025","value":7}]},
+              {"source":{"source_name":"B","publisher":"P","source_url":"https://example.test/b"},"series":{"metric_key":"housing.monthly_rent","metric_name":"Rent","domain":"housing","unit":"JPY","statistic_type":"median","definition":"monthly rent","population_scope":"individuals","segment_definition":{"subject_scope":"individual"}},"observations":[{"reference_period":"2025","value":90000}]}
+            ]}
+            ```"""
+            preview = app.validate_benchmark_bundle(raw)
+            self.assertEqual(preview["datasets"], 2)
+            result = app.import_benchmark_bundle(raw, channel="chatgpt_copy")
+            self.assertEqual(result["datasets"], 2)
+            self.assertEqual(len(app.benchmark_projection()["series"]), 2)
+
+    def test_total_assets_is_not_matched_to_financial_assets(self):
+        with isolated_personal_os():
+            timestamp = app.now()
+            with app.db() as connection:
+                document_id = connection.execute("INSERT INTO documents(title,source,source_created_at,ingested_at,created_at,updated_at) VALUES(?,?,?,?,?,?)", ("source", "manual", timestamp, timestamp, timestamp, timestamp)).lastrowid
+                fact_id = connection.execute(
+                    """INSERT INTO facts(document_id,category,fact_type,fact_key,value_json,summary,confidence,extractor,created_at,status,retrieval_eligibility,truth_confidence,personal_relevance,subject_scope)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 10000000, "currency": "JPY", "details": {"subject_scope": "individual"}}', "total assets", .99, "test", timestamp, "current", "eligible", .99, "personal", "individual"),
+                ).lastrowid
+                connection.execute("INSERT INTO fact_reviews(fact_id,state,reviewed_at,created_at) VALUES(?,?,?,?)", (fact_id, "confirmed", timestamp, timestamp))
+            app.import_benchmark_reference({"source":{"source_name":"R","publisher":"P","source_url":"https://example.test/r"},"series":{"metric_key":"finance.financial_assets","metric_name":"Financial assets","domain":"finance","unit":"JPY","statistic_type":"median","definition":"financial assets","population_scope":"individuals","segment_definition":{"subject_scope":"individual"}},"observations":[{"reference_period":"2025","value":5000000}]})
+            series = app.benchmark_projection("finance.financial_assets")["series"][0]
+            self.assertEqual(series["compatibility"], "reference_only")
+            self.assertIsNone(series["personal"])
 
 
 if __name__ == "__main__":

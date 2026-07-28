@@ -11,15 +11,16 @@ def git(*args: str, cwd: Path | None = None) -> str:
 
 
 class PublicMirrorTests(unittest.TestCase):
-    def test_workflow_is_manual_and_has_required_safety_gates(self) -> None:
+    def test_workflow_runs_on_private_master_push_and_has_required_safety_gates(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "publish-public.yml").read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertNotIn("\n  push:", workflow)
+        self.assertIn("\n  push:\n    branches:\n      - master", workflow)
         self.assertNotIn("\n  pull_request:", workflow)
         self.assertIn("kkytmkmmk/personal-os-pb", workflow)
         self.assertIn("PUBLIC_REPO_TOKEN", workflow)
         self.assertIn("master", workflow)
         self.assertIn("GIT_ASKPASS", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
         self.assertNotIn("x-access-token:${PUBLIC_REPO_TOKEN}", workflow)
         for command in ("check_secrets.py", "check_public_safety.py", "check_tracked_private_files.py", "run_memory_quality_benchmark.py"):
             self.assertIn(command, workflow)

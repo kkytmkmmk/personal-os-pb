@@ -3033,14 +3033,10 @@ def migrate_current_truth() -> None:
 
 BENCHMARK_STAT_TYPES = {"mean", "median", "percentile", "proportion", "count", "distribution", "index"}
 BENCHMARK_COMPATIBILITY = {"exact", "comparable", "reference_only", "incompatible"}
-BENCHMARK_FACT_KEY_ALIASES = {
-    # These aliases are intentionally narrow.  A comparison is shown only for
-    # an unambiguous total/current Fact, never for an individual holding.
-    "finance.total_assets": ("finance.total_assets", "finance.asset_balance.total_assets"),
-    "finance.monthly_investment": ("finance.monthly_investment.total",),
-    "housing.monthly_rent": ("housing.monthly_rent.total",),
-    "work.annual_income": ("work.income.total", "finance.income.annual_income"),
-}
+# A comparison defaults to the exact metric key.  Aliases must never bridge
+# total assets and financial assets (or individual and household measures).
+# Add a new key only after its full definition/scope contract is reviewed.
+BENCHMARK_FACT_KEY_ALIASES: dict[str, tuple[str, ...]] = {}
 PERSONAL_SPACE_COLORS = {
     "finance": "#22C55E", "travel": "#38BDF8", "housing": "#F59E0B", "relationship": "#F472B6",
     "work": "#6366F1", "health": "#EF4444", "life": "#EAB308", "lifestyle": "#EAB308",
@@ -3058,7 +3054,8 @@ def migrate_visualization_benchmark() -> None:
               id INTEGER PRIMARY KEY AUTOINCREMENT, source_name TEXT NOT NULL, publisher TEXT NOT NULL,
               source_url TEXT NOT NULL, source_type TEXT NOT NULL DEFAULT 'official', methodology TEXT NOT NULL DEFAULT '',
               retrieval_mode TEXT NOT NULL DEFAULT 'manual_import', expected_frequency TEXT NOT NULL DEFAULT 'irregular',
-              last_checked_at TEXT, last_successful_at TEXT, usage_notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+              last_checked_at TEXT, last_successful_at TEXT, usage_notes TEXT NOT NULL DEFAULT '', is_demo INTEGER NOT NULL DEFAULT 0,
+              import_channel TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS benchmark_series (
               id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL, metric_key TEXT NOT NULL, metric_name TEXT NOT NULL,
@@ -3084,6 +3081,11 @@ def migrate_visualization_benchmark() -> None:
             CREATE INDEX IF NOT EXISTS idx_benchmark_observations_series ON benchmark_observations(series_id,reference_period DESC);
             """
         )
+        source_columns = {row["name"] for row in connection.execute("PRAGMA table_info(benchmark_sources)")}
+        if "is_demo" not in source_columns:
+            connection.execute("ALTER TABLE benchmark_sources ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
+        if "import_channel" not in source_columns:
+            connection.execute("ALTER TABLE benchmark_sources ADD COLUMN import_channel TEXT NOT NULL DEFAULT 'manual'")
         record_schema_migrations(connection)
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
@@ -3096,7 +3098,7 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
     with db() as connection:
         sql = """SELECT s.id,s.metric_key,s.metric_name,s.domain,s.unit,s.statistic_type,s.definition,s.population_scope,
                          s.segment_definition_json,s.geography,s.frequency,s.version,src.source_name,src.publisher,src.source_url,
-                         src.methodology,src.last_successful_at
+                         src.methodology,src.last_successful_at,src.is_demo,src.import_channel
                   FROM benchmark_series s JOIN benchmark_sources src ON src.id=s.source_id WHERE s.active=1"""
         params: list[object] = []
         if metric_key:
@@ -3109,7 +3111,7 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
             keys = BENCHMARK_FACT_KEY_ALIASES.get(item["metric_key"], (item["metric_key"],))
             placeholders = ",".join("?" for _ in keys)
             fact = connection.execute(
-                f"""SELECT f.id,f.fact_key,f.value_json,f.summary,f.valid_from,f.created_at
+                f"""SELECT f.id,f.fact_key,f.value_json,f.summary,f.valid_from,f.created_at,f.subject_scope
                     FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
                     WHERE f.fact_key IN ({placeholders}) AND f.status='current' AND r.state='confirmed'
                       AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
@@ -3117,6 +3119,7 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
             ).fetchone()
             item["personal"] = None
             item["compatibility"] = "reference_only"
+            item["comparison"] = {"compatibility": "reference_only", "reasons": ["No compatible confirmed current Fact"]}
             if fact:
                 try:
                     fact_value = json.loads(fact["value_json"] or "{}")
@@ -3126,14 +3129,43 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
                     amount = None
                     fact_value = {}
                 currency = str(fact_value.get("currency") or "")
+                details = fact_value.get("details") if isinstance(fact_value.get("details"), dict) else {}
+                fact_scope = str(details.get("subject_scope") or fact["subject_scope"] or "unknown").lower()
+                try:
+                    series_details = json.loads(item["segment_definition_json"] or "{}")
+                except json.JSONDecodeError:
+                    series_details = {}
+                series_scope = str(series_details.get("subject_scope") or "unknown").lower()
                 # Currency/unit equality is required for an automatic numeric
                 # comparison.  Other definitions remain visible as reference.
                 unit_matches = bool(amount is not None and (
                     item["unit"] == currency or (currency == "JPY" and item["unit"] in {"JPY", "円"})
                 ))
-                item["compatibility"] = "exact" if unit_matches else "incompatible"
+                if fact_scope == "unknown" or series_scope == "unknown":
+                    item["compatibility"] = "reference_only"
+                    compatibility_reason = "Subject scope is not explicitly verified"
+                elif fact_scope != series_scope:
+                    item["compatibility"] = "incompatible"
+                    compatibility_reason = f"Subject scope differs: {fact_scope} vs {series_scope}"
+                elif unit_matches:
+                    item["compatibility"] = "exact"
+                    compatibility_reason = "Metric key, unit, and subject scope match"
+                else:
+                    item["compatibility"] = "incompatible"
+                    compatibility_reason = "Unit is not compatible"
                 item["personal"] = {"fact_id": fact["id"], "fact_key": fact["fact_key"], "value": amount,
                                     "unit": currency, "summary": fact["summary"], "valid_from": fact["valid_from"]}
+                latest_value = item["observations"][0]["value"] if item["observations"] else None
+                comparison = {"compatibility": item["compatibility"], "personal_value": amount, "reference_value": latest_value,
+                              "unit": item["unit"], "reasons": []}
+                if item["compatibility"] == "exact" and amount is not None and latest_value is not None:
+                    reference_value = float(latest_value)
+                    comparison.update({"absolute_difference": amount - reference_value,
+                                       "ratio": amount / reference_value if reference_value else None,
+                                       "percentage_difference": (amount - reference_value) / reference_value if reference_value else None})
+                else:
+                    comparison["reasons"] = [compatibility_reason]
+                item["comparison"] = comparison
     return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES), "privacy": "reference data stays local; personal facts are never sent to sources"}
 
 
@@ -3164,7 +3196,7 @@ def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
     if not source_name or not publisher or not source_url.startswith(("https://", "http://")):
         raise ValueError("source_name, publisher, and an http(s) source_url are required")
     source_type = str(source.get("source_type", "official")).strip()
-    if source_type not in {"official", "quasi_official", "research", "other"}:
+    if source_type not in {"official", "quasi_official", "research", "other", "sample"}:
         raise ValueError("source_type is invalid")
     metric_key = str(series.get("metric_key", "")).strip()
     metric_name = str(series.get("metric_name", "")).strip()
@@ -3271,8 +3303,79 @@ def import_benchmark_reference(payload: dict[str, object]) -> dict[str, object]:
             "revised_observations": revised_observations, "message": "Reference data imported locally. No personal fact was transmitted."}
 
 
+def parse_benchmark_bundle(raw_payload: object) -> list[dict[str, object]]:
+    """Accept a legacy one-dataset payload or a fenced multi-dataset Bundle."""
+    if isinstance(raw_payload, str):
+        text = raw_payload.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text).strip()
+        try:
+            raw_payload = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ValueError("Benchmark JSON could not be parsed") from error
+    if not isinstance(raw_payload, dict):
+        raise ValueError("Benchmark payload must be a JSON object")
+    datasets = raw_payload.get("datasets") if "datasets" in raw_payload else [raw_payload]
+    if not isinstance(datasets, list) or not datasets:
+        raise ValueError("datasets must contain at least one dataset")
+    if len(datasets) > 30:
+        raise ValueError("A Bundle may contain at most 30 datasets")
+    if not all(isinstance(dataset, dict) for dataset in datasets):
+        raise ValueError("Every dataset must be an object")
+    return [dict(dataset) for dataset in datasets]
+
+
+def validate_benchmark_bundle(raw_payload: object) -> dict[str, object]:
+    """Validate all datasets before any write, preventing partial user imports."""
+    datasets = parse_benchmark_bundle(raw_payload)
+    warnings: list[str] = []
+    metrics: list[str] = []
+    observations = 0
+    for dataset in datasets:
+        source, series, items = dataset.get("source"), dataset.get("series"), dataset.get("observations")
+        if not isinstance(source, dict) or not isinstance(series, dict) or not isinstance(items, list) or not items:
+            raise ValueError("Each dataset requires source, series, and observations")
+        if not str(source.get("publisher", "")).strip() or not str(source.get("source_url", "")).startswith(("https://", "http://")):
+            raise ValueError("Each dataset requires publisher and an http(s) source_url")
+        if not all(str(series.get(field, "")).strip() for field in ("metric_key", "metric_name", "unit", "statistic_type", "definition", "population_scope")):
+            raise ValueError("Each series requires metric key/name, unit, statistic type, definition, and population scope")
+        if str(series.get("statistic_type")) not in BENCHMARK_STAT_TYPES:
+            raise ValueError("Unsupported statistic_type")
+        if str(source.get("source_type", "official")) == "sample":
+            warnings.append(f"{series.get('metric_name')}: demo data")
+        if not isinstance(series.get("segment_definition", {}), dict):
+            raise ValueError("segment_definition must be an object")
+        for item in items:
+            if not isinstance(item, dict) or not str(item.get("reference_period", "")).strip():
+                raise ValueError("Every observation requires reference_period")
+        metrics.append(str(series["metric_name"]))
+        observations += len(items)
+    return {"datasets": len(datasets), "observations": observations, "metrics": metrics, "warnings": warnings, "payload": datasets}
+
+
+def import_benchmark_bundle(raw_payload: object, channel: str = "manual") -> dict[str, object]:
+    """Validate first, then import a Bundle. Invalid input produces no writes."""
+    preview = validate_benchmark_bundle(raw_payload)
+    results = []
+    for dataset in preview.pop("payload"):
+        result = import_benchmark_reference(dataset)
+        results.append(result)
+        if str(dataset.get("source", {}).get("source_type", "")) == "sample":
+            with db() as connection:
+                connection.execute("UPDATE benchmark_sources SET is_demo=1,import_channel=? WHERE id=?", (channel, result["source_id"]))
+    return {"datasets": len(results), "new_observations": sum(int(item["new_observations"]) for item in results),
+            "revised_observations": sum(int(item["revised_observations"]) for item in results), "warnings": preview["warnings"]}
+
+
+def demo_benchmark_bundle() -> dict[str, object]:
+    """Synthetic data only. It is never loaded automatically or used by chat."""
+    path = ROOT / "resources" / "benchmarks" / "demo_bundle.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def personal_space_projection(include_sensitive: bool = False, limit: int = 180) -> dict[str, object]:
-    """Stable, bounded graph payload for the Canvas/WebGL-independent renderer."""
+    """Stable, bounded, local graph payload for the Canvas/WebGL-independent renderer."""
     with db() as connection:
         facts = [dict(row) for row in connection.execute(
             """SELECT f.id,f.category,f.fact_type,f.status,f.summary,f.created_at,f.valid_from,f.truth_confidence,
@@ -3284,17 +3387,53 @@ def personal_space_projection(include_sensitive: bool = False, limit: int = 180)
         decisions = [dict(row) for row in connection.execute(
             "SELECT id,domain,title,decision_state,created_at,updated_at FROM decisions ORDER BY updated_at DESC LIMIT 60"
         )]
+        recommendations = [dict(row) for row in connection.execute(
+            "SELECT id,domain,title,status,created_at,updated_at FROM recommendations WHERE status!='dismissed' ORDER BY updated_at DESC LIMIT 40"
+        )]
+        plans = [dict(row) for row in connection.execute(
+            "SELECT id,domain,title,status,result,decision_id,source_recommendation_id,created_at,updated_at FROM plans ORDER BY updated_at DESC LIMIT 40"
+        )]
+        execution_events = [dict(row) for row in connection.execute(
+            "SELECT id,decision_id,plan_id,event_type,summary,occurred_at,created_at FROM execution_events ORDER BY COALESCE(occurred_at,created_at) DESC LIMIT 60"
+        )]
     sensitive = {"health", "relationship"}
-    nodes = []
+    nodes: list[dict[str, object]] = []
+    edges: list[dict[str, object]] = []
     for row in facts:
         hidden = (row["category"] in sensitive or row["category"] == "finance") and not include_sensitive
         nodes.append({"id": f"fact-{row['id']}", "kind": "fact", "domain": row["category"], "label": "Sensitive fact" if hidden else row["summary"][:90],
                       "masked": hidden, "status": row["status"], "strength": min(1.0, 0.2 + 0.12 * row["evidence_count"] + float(row["truth_confidence"] or 0) * .45),
-                      "updated_at": row["valid_from"] or row["created_at"], "target": f"/api/facts/{row['id']}/evidence"})
+                      "updated_at": row["valid_from"] or row["created_at"], "target": f"/api/facts/{row['id']}/evidence", "evidence_count": row["evidence_count"]})
     for row in decisions:
         nodes.append({"id": f"decision-{row['id']}", "kind": "decision", "domain": row["domain"] or "other", "label": row["title"][:90],
                       "masked": False, "status": row["decision_state"], "strength": .82, "updated_at": row["updated_at"] or row["created_at"], "target": f"/api/decisions/{row['id']}"})
-    return {"layout_version": "personal-space-v1", "colors": PERSONAL_SPACE_COLORS, "nodes": nodes, "edges": []}
+    for row in recommendations:
+        nodes.append({"id": f"recommendation-{row['id']}", "kind": "recommendation", "domain": row["domain"] or "other", "label": row["title"][:90],
+                      "masked": False, "status": row["status"], "strength": .55, "updated_at": row["updated_at"] or row["created_at"], "target": f"/api/recommendations/{row['id']}"})
+    for row in plans:
+        plan_id = f"plan-{row['id']}"
+        nodes.append({"id": plan_id, "kind": "plan", "domain": row["domain"] or "other", "label": row["title"][:90],
+                      "masked": False, "status": row["status"], "strength": .68, "updated_at": row["updated_at"] or row["created_at"], "target": f"/api/plans/{row['id']}"})
+        if row["source_recommendation_id"]:
+            edges.append({"from": f"recommendation-{row['source_recommendation_id']}", "to": plan_id, "kind": "lifecycle"})
+        if row["decision_id"]:
+            edges.append({"from": plan_id, "to": f"decision-{row['decision_id']}", "kind": "lifecycle"})
+        if row["result"]:
+            result_id = f"result-plan-{row['id']}"
+            nodes.append({"id": result_id, "kind": "result", "domain": row["domain"] or "other", "label": str(row["result"])[:90],
+                          "masked": False, "status": "result", "strength": .9, "updated_at": row["updated_at"] or row["created_at"], "target": f"/api/plans/{row['id']}"})
+            edges.append({"from": plan_id, "to": result_id, "kind": "result"})
+    for row in execution_events:
+        event_id = f"result-event-{row['id']}"
+        nodes.append({"id": event_id, "kind": "result", "domain": "life", "label": row["summary"][:90], "masked": False,
+                      "status": row["event_type"], "strength": .72, "updated_at": row["occurred_at"] or row["created_at"], "target": f"/api/decisions/{row['decision_id']}"})
+        if row["decision_id"]:
+            edges.append({"from": f"decision-{row['decision_id']}", "to": event_id, "kind": "result"})
+        if row["plan_id"]:
+            edges.append({"from": f"plan-{row['plan_id']}", "to": event_id, "kind": "result"})
+    known = {str(node["id"]) for node in nodes}
+    edges = [edge for edge in edges if str(edge["from"]) in known and str(edge["to"]) in known]
+    return {"layout_version": "personal-space-v2", "colors": PERSONAL_SPACE_COLORS, "nodes": nodes[:limit + 160], "edges": edges}
 
 
 def backfill_fact_evidence() -> int:
@@ -7350,11 +7489,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if not self._authorize(True):
             return
+        if path == "/api/benchmarks/preview":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                return self.send_json(validate_benchmark_bundle(payload.get("raw_json", payload)))
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        if path == "/api/benchmarks/demo":
+            try:
+                return self.send_json(import_benchmark_bundle(demo_benchmark_bundle(), channel="demo"), HTTPStatus.CREATED)
+            except (ValueError, TypeError, OSError, sqlite3.Error, json.JSONDecodeError) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/benchmarks/import":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-                return self.send_json(import_benchmark_reference(payload), HTTPStatus.CREATED)
+                return self.send_json(import_benchmark_bundle(payload.get("raw_json", payload), channel="chatgpt_copy" if payload.get("raw_json") else "manual"), HTTPStatus.CREATED)
             except (ValueError, TypeError, sqlite3.Error, json.JSONDecodeError) as error:
                 return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/facts/auto-resolve":

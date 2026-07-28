@@ -100,6 +100,7 @@
     if (canonical === 'review' && typeof refreshReview === 'function') refreshReview();
     if (canonical === 'visualize' && typeof refreshInsights === 'function') refreshInsights();
     if (canonical === 'visualize' && typeof refreshPersonalSpace === 'function') refreshPersonalSpace();
+    if (canonical === 'explore' && typeof refreshExplore === 'function') refreshExplore();
     if (canonical === 'benchmark' && typeof refreshBenchmarks === 'function') refreshBenchmarks();
     if (canonical === 'verify' && typeof refreshFactReview === 'function') refreshFactReview();
     if (canonical === 'today' && typeof refreshToday === 'function') refreshToday();
@@ -169,6 +170,24 @@
     window.addEventListener('popstate', () => navigateTo(location.hash.slice(1) || 'today', { push: false }));
     window.addEventListener('hashchange', () => navigateTo(location.hash.slice(1) || 'today', { push: false }));
     window.personalOsNavigate = navigateTo;
+  }
+
+  function ensureExploreNavigation() {
+    if (!document.getElementById('explore')) return;
+    const primary = document.getElementById('os-nav');
+    if (primary && !document.getElementById('explore-primary-nav')) {
+      const button = document.createElement('button');
+      button.id = 'explore-primary-nav'; button.type = 'button'; button.className = 'secondary';
+      button.dataset.tab = 'explore'; button.textContent = '探索';
+      const admin = primary.querySelector('[data-action="admin"]');
+      if (admin) primary.insertBefore(button, admin); else primary.append(button);
+    }
+    const more = document.querySelector('#more-sheet .secondary-grid');
+    if (more && !document.getElementById('explore-mobile-nav')) {
+      const button = document.createElement('button');
+      button.id = 'explore-mobile-nav'; button.type = 'button'; button.className = 'secondary';
+      button.dataset.tab = 'explore'; button.textContent = '探索'; more.prepend(button);
+    }
   }
 
   function wireQuickActions() {
@@ -529,6 +548,7 @@
     wireActionReliability();
     setupRecordUI();
     addPageHeaders();
+    ensureExploreNavigation();
     wireNavigation();
     wireQuickActions();
     wireDrafts();
