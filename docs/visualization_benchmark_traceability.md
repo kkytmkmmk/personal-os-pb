@@ -21,7 +21,7 @@ public-reference data remain separate.
 | Current/history distinction and filtering | Backend emits `temporal_bucket`; UI filters on it rather than node status. | `test_personal_space_uses_temporal_buckets_and_accessible_fallback` | Done |
 | Sensitive-label default masking | Finance, health, and relationship labels are masked for Fact, Decision, Recommendation, Plan, Result, and execution-event nodes unless locally revealed. | `test_personal_space_masks_every_sensitive_node_and_inherits_result_domain` | Done |
 | Result domain and edge integrity | Execution-event Results inherit a linked Plan/Decision domain; dangling lifecycle edges are removed. | `test_personal_space_masks_every_sensitive_node_and_inherits_result_domain` | Done |
-| Interaction/accessibility | Stable Canvas supports rotate, zoom, pan, drag-selection suppression and reset; a focusable node-list fallback is rendered. Node detail is read in-app via `/api/personal-space/nodes/{kind}/{id}`. | Static UI and projection tests | Partial (browser viewport E2E remains) |
+| Interaction/accessibility | Stable Canvas supports rotate, zoom, pan, drag-selection suppression and a static `#space-reset` control; a focusable node-list fallback is rendered. Node detail is read in-app via `/api/personal-space/nodes/{kind}/{id}`. | Static UI/projection tests; local browser verification at 1280×720 and 390×844 | Done |
 | iPhone/reduced-motion fallback | Canvas renderer caps mobile node count; no animation loop; Canvas is the non-WebGL fallback | source inspection | Done |
 | Automated remote source refresh | No remote refresh adapter is implemented yet; manual import is intentional for the first release | N/A | Partial |
 | Distribution percentile visualization | Five-point distributions are displayed with a verified band only. Full density rendering is deferred. | `test_percentile_band_never_falls_back_to_a_fake_marker` | Partial |
@@ -34,3 +34,5 @@ public-reference data remain separate.
   Facts, Decisions, raw conversations, or attachments.
 - The comparison screen is a secondary management surface. It is not shown in
   the primary Today navigation.
+- Browser verification uses the isolated verification database and port 8877;
+  it does not open or mutate the production database.

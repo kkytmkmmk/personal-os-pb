@@ -47,6 +47,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("node.temporal_bucket === 'current'", visualization)
         self.assertIn("personal-space-fallback", visualization)
         self.assertIn("wireGestures", visualization)
+        self.assertIn('id="space-reset"', self.index)
         self.assertNotIn("percentile_hint || 50", visualization)
         self.assertIn("reasonText", visualization)
 
