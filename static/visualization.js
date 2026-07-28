@@ -6,12 +6,12 @@
   const domainNames = { finance: '資産', travel: '旅行', housing: '住居', relationship: '人間関係', work: '仕事', health: '健康', life: '生活', lifestyle: '生活', learning: '学習', hobby: '趣味', food: '食事', shopping: '買い物', other: 'その他' };
   let spaceData = { nodes: [], edges: [], colors: {} };
   let selectedId = null;
-  let camera = { yaw: .16, pitch: -.18, zoom: 1 };
+  let camera = { yaw: .16, pitch: -.18, zoom: 1, panX: 0, panY: 0 };
 
   const byId = id => document.getElementById(id);
   const stableNumber = text => { let value = 2166136261; for (const char of String(text)) value = Math.imul(value ^ char.charCodeAt(0), 16777619); return value >>> 0; };
   function coords(node) { const hash = stableNumber(node.id); const group = stableNumber(node.domain) % 12; const angle = group * Math.PI / 6; const radius = .34 + (hash % 29) / 100; return { x: Math.cos(angle) * radius + ((hash >>> 8) % 21 - 10) / 180, y: Math.sin(angle) * radius + ((hash >>> 13) % 21 - 10) / 180, z: ((hash >>> 18) % 100 - 50) / 100 }; }
-  function project(node, width, height) { const p = coords(node); const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw), cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch); const x = p.x * cy - p.z * sy; const z = p.x * sy + p.z * cy; const y = p.y * cp - z * sp; const depth = 1.4 + z * .45; return { x: width / 2 + (x / depth) * width * .76 * camera.zoom, y: height / 2 + (y / depth) * height * .76 * camera.zoom, depth }; }
+  function project(node, width, height) { const p = coords(node); const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw), cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch); const x = p.x * cy - p.z * sy; const z = p.x * sy + p.z * cy; const y = p.y * cp - z * sp; const depth = 1.4 + z * .45; return { x: width / 2 + camera.panX + (x / depth) * width * .76 * camera.zoom, y: height / 2 + camera.panY + (y / depth) * height * .76 * camera.zoom, depth }; }
   function activeNodes() {
     const query = (byId('space-search')?.value || '').trim().toLowerCase();
     const domain = byId('space-domain')?.value || '';
@@ -20,7 +20,7 @@
     const history = byId('space-history')?.checked;
     const mobile = matchMedia('(max-width: 767px)').matches;
     return spaceData.nodes.filter(node => {
-      const isCurrent = node.status === 'current';
+      const isCurrent = node.temporal_bucket === 'current';
       if ((isCurrent && !current) || (!isCurrent && !history)) return false;
       if (domain && node.domain !== domain) return false;
       if (kind && node.kind !== kind) return false;
@@ -46,6 +46,13 @@
     }
     nodes.forEach(node => { const color = spaceData.colors[node.domain] || spaceData.colors.other || '#94A3B8'; const radius = 4 + Number(node.strength || .4) * 8; ctx.save(); ctx.translate(node.p.x, node.p.y); ctx.globalAlpha = node.status === 'current' ? .96 : .38; ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowColor = color; ctx.shadowBlur = node.id === selectedId ? 22 : (node.kind === 'result' ? 12 : 6); ctx.beginPath(); drawShape(ctx, node, radius); if (node.kind === 'recommendation') ctx.stroke(); else ctx.fill(); ctx.restore(); if (width > 620 && !node.masked) { ctx.globalAlpha = node.status === 'current' ? .88 : .45; ctx.fillStyle = '#e8efeb'; ctx.font = '11px system-ui'; ctx.fillText(String(node.label).slice(0, 20), node.p.x + radius + 4, node.p.y + 3); } });
     canvas._spaceNodes = nodes;
+    const fallback = byId('personal-space-fallback');
+    if (fallback) {
+      fallback.innerHTML = nodes.slice(0, 30).map(node => `<button type="button" data-space-node="${esc(node.id)}">${esc(node.label)} (${esc(node.kind)})</button>`).join('');
+      fallback.querySelectorAll('[data-space-node]').forEach(button => button.addEventListener('click', () => {
+        const node = nodes.find(item => item.id === button.dataset.spaceNode); if (node) showNode(node);
+      }));
+    }
   }
   function showNode(node) { selectedId = node.id; const detail = byId('personal-space-detail'); if (!detail) return; const safeLabel = esc(node.label); detail.innerHTML = `<b>${safeLabel}</b><div class="meta">${esc(domainNames[node.domain] || node.domain)} ・ ${esc(node.kind)} ・ ${esc(node.status || '')}</div>${node.masked ? '<p>機微情報はマスク中です。表示を明示的に切り替えてください。</p>' : `<p><a href="${esc(node.target)}" target="_blank" rel="noopener">根拠・詳細を確認</a></p>`}`; renderSpace(); }
   function chooseNode(event) { const canvas = event.currentTarget, rect = canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top; const nearest = (canvas._spaceNodes || []).map(node => ({ node, d: Math.hypot(node.p.x - x, node.p.y - y) })).sort((a, b) => a.d - b.d)[0]; if (nearest && nearest.d <= 30) showNode(nearest.node); }
@@ -62,8 +69,36 @@
   async function copyPrompt() { const prompt = '日本の公開統計からPopulation Benchmark Bundleを作成してください。個人の情報は入力しません。各datasetに source.publisher, source.source_url, source_type, methodology, series.metric_key, metric_name, unit, statistic_type, definition, population_scope, segment_definition（subject_scope等）, observations.reference_period/value を含めてください。推測値やURL不明の値は入れず、JSONだけを返してください。'; try { await navigator.clipboard.writeText(prompt); byId('benchmark-import-notice').textContent = 'ChatGPT用プロンプトをコピーしました。'; } catch { byId('benchmark-import-notice').textContent = 'コピーできませんでした。'; } }
   function setMode(mode) { ['space', 'benchmark'].forEach(name => { byId(`explore-${name}`)?.classList.toggle('hidden', name !== mode); document.querySelector(`[data-explore-mode="${name}"]`)?.classList.toggle('active', name === mode); }); if (mode === 'space') refreshSpace(); else refreshBenchmarks(); }
   function wire() { document.querySelectorAll('[data-explore-mode]').forEach(button => button.addEventListener('click', () => setMode(button.dataset.exploreMode))); ['space-search', 'space-domain', 'space-kind', 'space-current', 'space-history', 'space-edges'].forEach(id => byId(id)?.addEventListener(id === 'space-search' ? 'input' : 'change', renderSpace)); byId('space-sensitive')?.addEventListener('change', refreshSpace); byId('personal-space-canvas')?.addEventListener('click', chooseNode); byId('benchmark-preview')?.addEventListener('click', previewBundle); byId('benchmark-import-form')?.addEventListener('submit', importBundle); byId('benchmark-load-demo')?.addEventListener('click', loadDemo); byId('benchmark-copy-prompt')?.addEventListener('click', copyPrompt); window.addEventListener('resize', renderSpace); }
+  function percentileBand(observation, comparison) {
+    const distribution = observation?.distribution;
+    if (!distribution || typeof distribution !== 'object') return '';
+    const points = ['p10', 'p25', 'p50', 'p75', 'p90'].filter(key => distribution[key] != null);
+    if (points.length !== 5) return '<p class="help">分布上の位置は未判定です。</p>';
+    const band = comparison?.percentile_band;
+    return `<div class="benchmark-band">${points.map(key => `<span>${key.toUpperCase()}<b>${formatNumber(distribution[key])}</b></span>`).join('')}</div>${band ? `<p class="help">あなたの位置: ${esc(band.replace('_', '–').toUpperCase())} の範囲</p>` : '<p class="help">分布上の位置は未判定です。</p>'}`;
+  }
+  function showNode(node) {
+    selectedId = node.id;
+    const detail = byId('personal-space-detail');
+    if (!detail) return;
+    detail.innerHTML = `<b>${esc(node.label)}</b><div class="meta">${esc(domainNames[node.domain] || node.domain)} ・ ${esc(node.kind)} ・ ${esc(node.temporal_bucket || '')}</div>${node.masked ? '<p>機微情報はマスク中です。</p>' : '<p>この画面内で根拠・詳細を確認できます。</p>'}`;
+    renderSpace();
+  }
+  function wireSpaceGestures() {
+    const canvas = byId('personal-space-canvas'); if (!canvas) return;
+    let drag = null, pinch = null;
+    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'secondary'; reset.textContent = '表示をリセット';
+    reset.addEventListener('click', () => { camera = { yaw: .16, pitch: -.18, zoom: 1, panX: 0, panY: 0 }; renderSpace(); });
+    canvas.parentElement?.before(reset);
+    canvas.addEventListener('wheel', event => { event.preventDefault(); camera.zoom = Math.max(.5, Math.min(2.4, camera.zoom * (event.deltaY > 0 ? .9 : 1.1))); renderSpace(); }, { passive: false });
+    canvas.addEventListener('pointerdown', event => { canvas.setPointerCapture?.(event.pointerId); drag = { x: event.clientX, y: event.clientY, pan: event.shiftKey }; });
+    canvas.addEventListener('pointermove', event => { if (!drag) return; const dx = event.clientX - drag.x, dy = event.clientY - drag.y; drag.x = event.clientX; drag.y = event.clientY; if (drag.pan) { camera.panX += dx; camera.panY += dy; } else { camera.yaw += dx * .012; camera.pitch = Math.max(-1.1, Math.min(1.1, camera.pitch + dy * .012)); } renderSpace(); });
+    canvas.addEventListener('pointerup', () => { drag = null; });
+    canvas.addEventListener('touchstart', event => { if (event.touches.length === 2) pinch = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY); }, { passive: true });
+    canvas.addEventListener('touchmove', event => { if (event.touches.length !== 2 || !pinch) return; const distance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY); camera.zoom = Math.max(.5, Math.min(2.4, camera.zoom * distance / pinch)); pinch = distance; renderSpace(); }, { passive: true });
+  }
   window.refreshPersonalSpace = refreshSpace;
   window.refreshBenchmarks = refreshBenchmarks;
   window.refreshExplore = () => { const active = document.querySelector('[data-explore-mode].active')?.dataset.exploreMode || 'space'; setMode(active); };
-  document.addEventListener('DOMContentLoaded', () => { wire(); });
+  document.addEventListener('DOMContentLoaded', () => { wire(); wireSpaceGestures(); });
 }());

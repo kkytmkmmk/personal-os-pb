@@ -36,10 +36,18 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-reliability-1", self.sw)
+        self.assertIn("personal-os-v3-reliability-2", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
+        self.assertIn('"/visualization.js"', self.sw)
+
+    def test_personal_space_uses_temporal_buckets_and_accessible_fallback(self):
+        visualization = (ROOT / "static" / "visualization.js").read_text(encoding="utf-8")
+        self.assertIn("node.temporal_bucket === 'current'", visualization)
+        self.assertIn("personal-space-fallback", visualization)
+        self.assertIn("wireSpaceGestures", visualization)
+        self.assertNotIn("percentile_hint || 50", visualization[visualization.rfind("function percentileBand"):])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
-const CACHE_NAME = "personal-os-v3-reliability-1";
-const APP_SHELL = ["/", "/styles.css", "/api-client.js", "/app.js", "/manifest.webmanifest", "/icon.svg"];
+const CACHE_NAME = "personal-os-v3-reliability-2";
+const APP_SHELL = ["/", "/styles.css", "/api-client.js", "/app.js", "/visualization.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));

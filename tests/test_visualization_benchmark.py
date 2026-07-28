@@ -129,10 +129,28 @@ class VisualizationBenchmarkTests(unittest.TestCase):
             masked = app.personal_space_projection()
             node = next(item for item in masked["nodes"] if item["id"] == f"fact-{fact_id}")
             self.assertTrue(node["masked"])
-            self.assertEqual(node["label"], "Sensitive fact")
+            self.assertNotIn("private relationship detail", node["label"])
             unmasked = app.personal_space_projection(include_sensitive=True)
             node = next(item for item in unmasked["nodes"] if item["id"] == f"fact-{fact_id}")
             self.assertFalse(node["masked"])
+
+    def test_personal_space_masks_every_sensitive_node_and_inherits_result_domain(self):
+        with isolated_personal_os():
+            timestamp = app.now()
+            with app.db() as connection:
+                decision_id = connection.execute("""INSERT INTO decisions(title,context,options_json,decision,rationale,status,created_at,updated_at,domain,decision_state)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""", ("private financial decision", "", "[]", "", "", "decided", timestamp, timestamp, "finance", "decided")).lastrowid
+                recommendation_id = connection.execute("""INSERT INTO recommendations(domain,title,created_at,updated_at) VALUES(?,?,?,?)""", ("finance", "private recommendation", timestamp, timestamp)).lastrowid
+                plan_id = connection.execute("""INSERT INTO plans(domain,title,source_recommendation_id,decision_id,status,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""", ("finance", "private plan", recommendation_id, decision_id, "completed", "private result", timestamp, timestamp)).lastrowid
+                connection.execute("INSERT INTO execution_events(decision_id,plan_id,event_type,summary,created_at) VALUES(?,?,?,?,?)", (decision_id, plan_id, "completed", "private execution", timestamp))
+            projection = app.personal_space_projection()
+            sensitive = [node for node in projection["nodes"] if node["domain"] == "finance"]
+            self.assertTrue(sensitive)
+            self.assertTrue(all(node["masked"] for node in sensitive))
+            event = next(node for node in sensitive if node["id"].startswith("result-event-"))
+            self.assertEqual(event["domain"], "finance")
+            self.assertEqual(event["temporal_bucket"], "history")
+            self.assertTrue(all(edge["from"] in {node["id"] for node in projection["nodes"]} and edge["to"] in {node["id"] for node in projection["nodes"]} for edge in projection["edges"]))
 
     def test_fenced_bundle_validates_before_import_and_imports_all_datasets(self):
         with isolated_personal_os():

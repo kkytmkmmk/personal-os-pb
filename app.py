@@ -3686,6 +3686,73 @@ def personal_space_projection(include_sensitive: bool = False, limit: int = 180)
     return {"layout_version": "personal-space-v2", "colors": PERSONAL_SPACE_COLORS, "nodes": nodes[:limit + 160], "edges": edges}
 
 
+def _space_temporal_bucket(kind: str, status: object) -> str:
+    state = str(status or "").lower()
+    if kind == "fact":
+        return "current" if state == "current" else "history"
+    if kind == "recommendation":
+        return "history" if state in {"dismissed", "converted"} else "current"
+    if kind == "plan":
+        return "history" if state in {"completed", "cancelled"} else "current"
+    if kind == "decision":
+        return "history" if state in {"result", "evaluated", "closed"} else "current"
+    return "history"
+
+
+def _space_node(node_id: str, kind: str, domain: object, label: object, status: object, updated_at: object,
+                strength: float, include_sensitive: bool, **extra: object) -> dict[str, object]:
+    normalized_domain = canonical_domain(str(domain or "other"))
+    masked = normalized_domain in {"finance", "relationship", "health"} and not include_sensitive
+    return {"id": node_id, "kind": kind, "domain": normalized_domain, "label": "機微情報（マスク中）" if masked else str(label or "")[:90],
+            "masked": masked, "status": str(status or ""), "temporal_bucket": _space_temporal_bucket(kind, status),
+            "strength": strength, "updated_at": updated_at, "detail": {"kind": kind, "id": node_id}, **extra}
+
+
+def personal_space_projection(include_sensitive: bool = False, limit: int = 180) -> dict[str, object]:
+    """Stable, bounded local graph.  Sensitive labels are masked for every node kind."""
+    with db() as connection:
+        facts = [dict(row) for row in connection.execute("""SELECT f.id,f.category,f.status,f.summary,f.created_at,f.valid_from,f.truth_confidence,
+            (SELECT COUNT(*) FROM fact_evidence e WHERE e.fact_id=f.id) AS evidence_count FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+            WHERE r.state='confirmed' AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
+            ORDER BY CASE f.status WHEN 'current' THEN 0 ELSE 1 END,f.created_at DESC LIMIT ?""", (limit,))]
+        decisions = [dict(row) for row in connection.execute("SELECT id,domain,title,decision_state,created_at,updated_at FROM decisions ORDER BY updated_at DESC LIMIT 60")]
+        recommendations = [dict(row) for row in connection.execute("SELECT id,domain,title,status,created_at,updated_at FROM recommendations WHERE status!='dismissed' ORDER BY updated_at DESC LIMIT 40")]
+        plans = [dict(row) for row in connection.execute("SELECT id,domain,title,status,result,decision_id,source_recommendation_id,created_at,updated_at FROM plans ORDER BY updated_at DESC LIMIT 40")]
+        events = [dict(row) for row in connection.execute("""SELECT e.id,e.decision_id,e.plan_id,e.event_type,e.summary,e.occurred_at,e.created_at,
+            COALESCE(p.domain,d.domain,'other') AS domain FROM execution_events e
+            LEFT JOIN plans p ON p.id=e.plan_id LEFT JOIN decisions d ON d.id=e.decision_id
+            ORDER BY COALESCE(e.occurred_at,e.created_at) DESC LIMIT 60""")]
+    nodes: list[dict[str, object]] = []
+    edges: list[dict[str, object]] = []
+    for row in facts:
+        nodes.append(_space_node(f"fact-{row['id']}", "fact", row["category"], row["summary"], row["status"], row["valid_from"] or row["created_at"], min(1.0, .2 + .12 * row["evidence_count"] + float(row["truth_confidence"] or 0) * .45), include_sensitive, evidence_count=row["evidence_count"]))
+    for row in decisions:
+        nodes.append(_space_node(f"decision-{row['id']}", "decision", row["domain"], row["title"], row["decision_state"], row["updated_at"] or row["created_at"], .82, include_sensitive))
+    for row in recommendations:
+        nodes.append(_space_node(f"recommendation-{row['id']}", "recommendation", row["domain"], row["title"], row["status"], row["updated_at"] or row["created_at"], .55, include_sensitive))
+    for row in plans:
+        plan_id = f"plan-{row['id']}"
+        nodes.append(_space_node(plan_id, "plan", row["domain"], row["title"], row["status"], row["updated_at"] or row["created_at"], .68, include_sensitive))
+        if row["source_recommendation_id"]:
+            edges.append({"from": f"recommendation-{row['source_recommendation_id']}", "to": plan_id, "kind": "lifecycle"})
+        if row["decision_id"]:
+            edges.append({"from": plan_id, "to": f"decision-{row['decision_id']}", "kind": "lifecycle"})
+        if row["result"]:
+            result_id = f"result-plan-{row['id']}"
+            nodes.append(_space_node(result_id, "result", row["domain"], row["result"], "result", row["updated_at"] or row["created_at"], .9, include_sensitive))
+            edges.append({"from": plan_id, "to": result_id, "kind": "result"})
+    for row in events:
+        event_id = f"result-event-{row['id']}"
+        nodes.append(_space_node(event_id, "result", row["domain"], row["summary"], row["event_type"], row["occurred_at"] or row["created_at"], .72, include_sensitive))
+        if row["decision_id"]:
+            edges.append({"from": f"decision-{row['decision_id']}", "to": event_id, "kind": "result"})
+        if row["plan_id"]:
+            edges.append({"from": f"plan-{row['plan_id']}", "to": event_id, "kind": "result"})
+    known = {str(node["id"]) for node in nodes}
+    return {"layout_version": "personal-space-v3", "colors": PERSONAL_SPACE_COLORS, "nodes": nodes[:limit + 160],
+            "edges": [edge for edge in edges if str(edge["from"]) in known and str(edge["to"]) in known]}
+
+
 def backfill_fact_evidence() -> int:
     """Create one provenance row for legacy facts without changing their values."""
     created = 0
