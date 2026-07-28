@@ -80,7 +80,7 @@
   }
 
   const pageAliases = { memory: 'home', admin: 'settings' };
-  const pageNames = { today: '今日', chat: '相談', home: '記憶', money: '資産', travel: '旅行', housing: '住居', people: '人間関係', decisions: '判断', settings: '管理', import: '取込', visualize: '記憶状況', verify: '記憶品質', review: 'レビュー', checkin: 'チェックイン', questions: '質問セット' };
+  const pageNames = { today: '今日', chat: '相談', home: '記憶', money: '資産', travel: '旅行', housing: '住居', people: '人間関係', decisions: '判断', explore: '探索', settings: '管理', import: '取込', visualize: '記憶状況', verify: '記憶品質', review: 'レビュー', checkin: 'チェックイン', questions: '質問セット' };
 
   function setActiveTab(tab) {
     if (!tab) return;
@@ -183,7 +183,7 @@
       if (admin) primary.insertBefore(button, admin); else primary.append(button);
     }
     const more = document.querySelector('#more-sheet .secondary-grid');
-    if (more && !document.getElementById('explore-mobile-nav')) {
+    if (more && !document.querySelector('#more-sheet [data-tab="explore"]')) {
       const button = document.createElement('button');
       button.id = 'explore-mobile-nav'; button.type = 'button'; button.className = 'secondary';
       button.dataset.tab = 'explore'; button.textContent = '探索'; more.prepend(button);
@@ -242,7 +242,7 @@
       // The legacy Today refresh still owns historical cards. Keep only the
       // read-only overview/candidate/summary projections in the daily view.
       today.querySelectorAll(':scope > section.card').forEach(section => {
-        const keep = ['today-overview', 'today-next-candidates', 'today-cycle-summary'].includes(section.id);
+        const keep = ['today-daily-actions', 'today-overview', 'today-next-actions', 'today-next-candidates', 'today-cycle-summary'].includes(section.id);
         if (!keep) section.hidden = true;
       });
     }

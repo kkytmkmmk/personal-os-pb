@@ -12,6 +12,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         cls.index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         cls.css = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
         cls.sw = (ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+        cls.daily_ux = (ROOT / "static" / "daily-ux.js").read_text(encoding="utf-8")
 
     def test_router_owns_hash_navigation(self):
         self.assertIn("function navigateTo", self.app_js)
@@ -36,11 +37,12 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-reliability-2", self.sw)
+        self.assertIn("personal-os-v3-daily-ux-1", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
         self.assertIn('"/visualization.js"', self.sw)
+        self.assertIn('"/daily-ux.js"', self.sw)
 
     def test_personal_space_uses_temporal_buckets_and_accessible_fallback(self):
         visualization = (ROOT / "static" / "visualization.js").read_text(encoding="utf-8")
@@ -50,6 +52,18 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn('id="space-reset"', self.index)
         self.assertNotIn("percentile_hint || 50", visualization)
         self.assertIn("reasonText", visualization)
+
+    def test_daily_navigation_and_capture_are_static_and_single_purpose(self):
+        self.assertIn('src="/daily-ux.js"', self.index)
+        self.assertIn('data-action="domains"', self.index)
+        self.assertIn('id="domains-sheet"', self.index)
+        self.assertIn('id="benchmark-import-sheet"', self.index)
+        self.assertIn('data-tab="explore">探索', self.index)
+        self.assertIn("unifyCapture", self.daily_ux)
+        self.assertIn("closest('.card')?.remove()", self.daily_ux)
+        self.assertIn("streamlineConsultation", self.daily_ux)
+        self.assertIn("streamlineDecisions", self.daily_ux)
+        self.assertIn("sessionStorage", self.daily_ux)
 
 
 if __name__ == "__main__":

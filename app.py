@@ -7398,6 +7398,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api-client.js": ("api-client.js", "application/javascript; charset=utf-8"),
             "/app.js": ("app.js", "application/javascript; charset=utf-8"),
             "/visualization.js": ("visualization.js", "application/javascript; charset=utf-8"),
+            "/daily-ux.js": ("daily-ux.js", "application/javascript; charset=utf-8"),
         }
         if path in static_files:
             filename, content_type = static_files[path]

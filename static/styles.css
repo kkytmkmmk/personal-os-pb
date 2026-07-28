@@ -55,9 +55,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .sheet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
 .sheet-grid button { width: 100%; }
 .secondary-grid button { font-size: .9rem; }
+.daily-actions-card { border-color: var(--accent); }
+.daily-actions-card .actions { margin-bottom: 0; }
+.daily-actions-card .actions button { min-width: 150px; }
+.timeline-row { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--line); }
+.timeline-row:first-of-type { border-top: 0; }
+.timeline-row span { color: var(--muted); font-size: .88rem; }
+.empty-state { padding: 12px 0; color: var(--muted); }
+.consultation-examples { margin: 8px 0 0; }
+.chat-context { margin-top: 16px; }
+.chat-context summary { cursor: pointer; color: var(--muted); }
+.chat-context #chat-memories { margin-top: 12px; }
+#record-image-details > .card { margin: 12px 0 0; }
+#record-image-details summary { cursor: pointer; color: var(--muted); padding: 10px 0; }
+form[data-submitting="true"] { opacity: .88; }
 
 /* Keep the day-to-day page focused; management cards remain reachable via admin nav. */
-#today > section.card:not(#today-overview):not(#today-next-candidates):not(#today-cycle-summary) { display: none; }
+#today > section.card:not(#today-daily-actions):not(#today-overview):not(#today-next-actions):not(#today-next-candidates):not(#today-cycle-summary) { display: none; }
 #today-ask-form, #recommendation-panel { display: none !important; }
 .cycle-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .cycle-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 10px 0; background: #12201d; }
@@ -76,7 +90,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 @media (max-width: 1023px) {
   main#app-main { width: min(100% - 24px, var(--os-max-width)); }
-  .primary-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .primary-nav { flex-wrap: wrap; overflow: visible; }
   .primary-nav button { white-space: nowrap; }
   .today-layout, .chat-layout { grid-template-columns: 1fr; }
 }
@@ -104,6 +118,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .chat-context { order: 2; }
   .ui-sheet-panel { width: 100%; }
   .sheet-grid { grid-template-columns: 1fr 1fr; }
+  .daily-actions-card .actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .daily-actions-card .actions button { min-width: 0; }
   /* Keep source/technical metadata behind an explicit details toggle. */
   .domain-fact .source.technical { display: none; }
 }
