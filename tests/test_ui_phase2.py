@@ -46,8 +46,9 @@ class UiPhase2StaticTests(unittest.TestCase):
         visualization = (ROOT / "static" / "visualization.js").read_text(encoding="utf-8")
         self.assertIn("node.temporal_bucket === 'current'", visualization)
         self.assertIn("personal-space-fallback", visualization)
-        self.assertIn("wireSpaceGestures", visualization)
-        self.assertNotIn("percentile_hint || 50", visualization[visualization.rfind("function percentileBand"):])
+        self.assertIn("wireGestures", visualization)
+        self.assertNotIn("percentile_hint || 50", visualization)
+        self.assertIn("reasonText", visualization)
 
 
 if __name__ == "__main__":
