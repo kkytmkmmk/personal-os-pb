@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -108,6 +109,25 @@ class VisualizationBenchmarkTests(unittest.TestCase):
     def test_percentile_band_never_falls_back_to_a_fake_marker(self):
         self.assertEqual(app.benchmark_percentile_band({"p10": 10, "p25": 20, "p50": 30, "p75": 40, "p90": 50}, 42), "p75_p90")
         self.assertIsNone(app.benchmark_percentile_band({"p50": 30}, 32))
+
+    def test_bundle_writer_failure_rolls_back_prior_dataset(self):
+        with isolated_personal_os():
+            bundle = {"datasets": [
+                {"source":{"source_name":"A","publisher":"P","source_url":"https://example.test/a"},"series":{"metric_key":"life.sleep_duration","metric_name":"Sleep","domain":"life","unit":"hours","statistic_type":"mean","definition":"sleep","population_scope":"people","segment_definition":{}},"observations":[{"reference_period":"2025","value":7}]},
+                {"source":{"source_name":"B","publisher":"P","source_url":"https://example.test/b"},"series":{"metric_key":"housing.monthly_rent","metric_name":"Rent","domain":"housing","unit":"JPY","statistic_type":"median","definition":"rent","population_scope":"people","segment_definition":{}},"observations":[{"reference_period":"2025","value":90000}]},
+            ]}
+            writer = app._import_benchmark_reference_write
+            calls = 0
+            def fail_second(connection, payload, channel):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise app.sqlite3.OperationalError("test-only writer failure")
+                return writer(connection, payload, channel)
+            with mock.patch.object(app, "_import_benchmark_reference_write", side_effect=fail_second):
+                with self.assertRaises(app.sqlite3.OperationalError):
+                    app.import_benchmark_bundle(bundle)
+            self.assertEqual(app.benchmark_projection()["series"], [])
 
     def test_personal_space_masks_sensitive_domains_by_default(self):
         with isolated_personal_os():
