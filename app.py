@@ -3041,8 +3041,8 @@ BENCHMARK_FACT_KEY_ALIASES: dict[str, tuple[str, ...]] = {}
 # intentionally not a proxy for a statistic's population unit.  A comparison
 # is only numeric when both sides carry this explicit contract.
 BENCHMARK_METRIC_CONTRACTS: dict[str, dict[str, object]] = {
-    "finance.total_assets": {"fact_keys": ("finance.total_assets",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
-    "finance.financial_assets": {"fact_keys": ("finance.financial_assets",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
+    "finance.total_assets": {"personal_fact_keys": ("finance.total_assets", "finance.asset_balance.total_assets"), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
+    "finance.financial_assets": {"personal_fact_keys": ("finance.financial_assets", "finance.asset_balance.financial_assets"), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
     "work.annual_income": {"fact_keys": ("work.annual_income",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "annual"},
     "housing.monthly_rent": {"fact_keys": ("housing.monthly_rent",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "monthly"},
     "life.sleep_duration": {"fact_keys": ("life.sleep_duration",), "canonical_unit": "hours", "statistical_unit": "individual", "measurement_kind": "duration", "time_basis": "daily"},
@@ -3067,12 +3067,27 @@ def benchmark_metric_contract(metric_key: str, supplied: object = None) -> dict[
     contract = dict(BENCHMARK_METRIC_CONTRACTS.get(metric_key, {}))
     contract.update(_json_object(supplied))
     contract["metric_key"] = str(contract.get("metric_key") or metric_key)
-    if not contract.get("fact_keys"):
-        contract["fact_keys"] = (metric_key,)
+    if not contract.get("personal_fact_keys"):
+        contract["personal_fact_keys"] = (metric_key,)
     missing = [field for field in BENCHMARK_CONTRACT_FIELDS if not str(contract.get(field, "")).strip()]
     if missing:
         raise ValueError("metric contract requires " + ", ".join(missing))
     return contract
+
+
+def resolve_personal_metric_contract(fact_key: str | None) -> dict[str, object] | None:
+    """Resolve a reviewed personal fact key without inferring from a summary.
+
+    This is intentionally a one-way Registry lookup.  It never maps a broad
+    asset fact to financial assets, or an individual fact to household data.
+    """
+    key = str(fact_key or "").strip()
+    if not key:
+        return None
+    for metric_key, definition in BENCHMARK_METRIC_CONTRACTS.items():
+        if key in tuple(definition.get("personal_fact_keys", ())):
+            return benchmark_metric_contract(metric_key, definition)
+    return None
 
 
 def normalize_benchmark_value(value: object, unit: object, canonical_unit: object) -> tuple[float | None, str | None]:
@@ -3164,7 +3179,7 @@ def migrate_visualization_benchmark() -> None:
         )
 
 
-def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
+def _legacy_benchmark_projection_unsafe(metric_key: str | None = None) -> dict[str, object]:
     """Return only local reference data; no personal data leaves this process."""
     with db() as connection:
         sql = """SELECT s.id,s.metric_key,s.metric_name,s.domain,s.unit,s.statistic_type,s.definition,s.population_scope,
@@ -3270,7 +3285,7 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
             item["comparison"] = {"compatibility": "reference_only", "reasons": [{"code": "no_confirmed_current_fact"}]}
             if not contract:
                 continue
-            keys = tuple(contract.get("fact_keys") or (item["metric_key"],))
+            keys = tuple(contract.get("personal_fact_keys") or (item["metric_key"],))
             fact = connection.execute(
                 f"""SELECT f.id,f.fact_key,f.value_json,f.summary,f.valid_from,f.created_at,f.subject_scope
                     FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
@@ -3282,7 +3297,9 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
                 continue
             fact_value = _json_object(fact["value_json"])
             details = fact_value.get("details") if isinstance(fact_value.get("details"), dict) else {}
-            fact_contract = _json_object(details.get("benchmark_contract"))
+            embedded_contract = _json_object(details.get("benchmark_contract"))
+            registry_contract = resolve_personal_metric_contract(str(fact["fact_key"]))
+            fact_contract = embedded_contract or (registry_contract or {})
             amount = fact_value.get("amount")
             unit = str(fact_value.get("currency") or fact_value.get("unit") or "")
             reasons: list[dict[str, object]] = []
@@ -3308,7 +3325,8 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
             )
             item["compatibility"] = compatibility
             item["personal"] = {"fact_id": fact["id"], "fact_key": fact["fact_key"], "value": amount, "unit": unit,
-                                "summary": fact["summary"], "valid_from": fact["valid_from"], "contract": fact_contract}
+                                "summary": fact["summary"], "valid_from": fact["valid_from"], "contract": fact_contract,
+                                "contract_source": "embedded" if embedded_contract else "registry" if registry_contract else "none"}
             comparison: dict[str, object] = {"compatibility": compatibility, "personal_value": personal_value,
                                              "reference_value": reference_value, "unit": canonical_unit, "reasons": reasons}
             if compatibility in {"exact", "comparable"} and personal_value is not None and reference_value is not None:
@@ -3319,6 +3337,28 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
             item["comparison"] = comparison
     return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES),
             "privacy": "Reference data stays local. Personal facts are never sent to sources; demo data is excluded from consultation context."}
+
+
+def benchmark_compatibility_audit() -> dict[str, object]:
+    """Read-only production diagnostic for Registry-derived personal metrics."""
+    metrics: list[dict[str, object]] = []
+    with db() as connection:
+        for metric_key, definition in BENCHMARK_METRIC_CONTRACTS.items():
+            keys = tuple(definition.get("personal_fact_keys", ()))
+            if not keys:
+                continue
+            marks = ",".join("?" for _ in keys)
+            rows = connection.execute(f"SELECT fact_key,COUNT(*) AS count FROM facts WHERE fact_key IN ({marks}) GROUP BY fact_key ORDER BY fact_key", keys).fetchall()
+            current = connection.execute(
+                f"""SELECT f.id,f.fact_key FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+                    WHERE f.fact_key IN ({marks}) AND f.status='current' AND r.state='confirmed'
+                      AND COALESCE(f.retrieval_eligibility,'pending')='eligible' LIMIT 1""", keys,
+            ).fetchone()
+            metrics.append({"metric_key": metric_key, "candidate_fact_keys": [dict(row) for row in rows],
+                            "matched_current_fact": bool(current), "matched_fact_key": current["fact_key"] if current else None,
+                            "compatibility": "exact" if current else "reference_only",
+                            "reasons": [] if current else [{"code": "no_confirmed_current_fact"}]})
+    return {"metrics": metrics, "read_only": True}
 
 
 def _benchmark_json(value: object, field: str) -> str:
@@ -7502,6 +7542,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/benchmarks":
             query = parse_qs(urlparse(self.path).query)
             return self.send_json(benchmark_projection(query.get("metric_key", [None])[0]))
+        if path == "/api/benchmarks/compatibility-audit":
+            return self.send_json(benchmark_compatibility_audit())
         if path == "/api/personal-space":
             query = parse_qs(urlparse(self.path).query)
             include_sensitive = query.get("include_sensitive", ["false"])[0].lower() == "true"
