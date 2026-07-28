@@ -150,6 +150,9 @@ class VisualizationBenchmarkTests(unittest.TestCase):
             self.assertEqual(event["domain"], "finance")
             self.assertEqual(event["temporal_bucket"], "history")
             self.assertTrue(all(edge["from"] in {node["id"] for node in projection["nodes"]} and edge["to"] in {node["id"] for node in projection["nodes"]} for edge in projection["edges"]))
+            detail = app.personal_space_node_detail("decision", decision_id)
+            self.assertTrue(detail["masked"])
+            self.assertNotIn("private financial decision", detail["title"])
 
     def test_fenced_bundle_validates_before_import_and_imports_all_datasets(self):
         with isolated_personal_os():

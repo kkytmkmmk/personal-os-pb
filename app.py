@@ -3726,6 +3726,51 @@ def personal_space_projection(include_sensitive: bool = False, limit: int = 180)
     return {"layout_version": "personal-space-v2", "colors": PERSONAL_SPACE_COLORS, "nodes": nodes[:limit + 160], "edges": edges}
 
 
+def personal_space_node_detail(kind: str, node_id: int, include_sensitive: bool = False) -> dict[str, object] | None:
+    """Return a small in-app detail projection; raw conversation is never returned here."""
+    allowed = {"fact", "decision", "recommendation", "plan", "result"}
+    if kind not in allowed:
+        return None
+    with db() as connection:
+        if kind == "fact":
+            row = connection.execute("""SELECT f.id,f.category,f.summary,f.status,f.valid_from,f.valid_to,f.created_at,
+                (SELECT COUNT(*) FROM fact_evidence e WHERE e.fact_id=f.id) AS evidence_count,d.title AS source_document
+                FROM facts f JOIN documents d ON d.id=f.document_id WHERE f.id=?""", (node_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row); item.update({"kind": kind, "temporal_bucket": _space_temporal_bucket(kind, row["status"]), "evidence": {"count": row["evidence_count"], "source_document": row["source_document"]}})
+        elif kind == "decision":
+            row = connection.execute("SELECT id,domain,title,question,decision,selected_option,rationale,result,later_evaluation,decision_state,decided_on,updated_at FROM decisions WHERE id=?", (node_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row); item.update({"kind": kind, "status": row["decision_state"], "temporal_bucket": _space_temporal_bucket(kind, row["decision_state"])})
+        elif kind == "recommendation":
+            row = connection.execute("SELECT id,domain,title,rationale,status,updated_at FROM recommendations WHERE id=?", (node_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row); item.update({"kind": kind, "temporal_bucket": _space_temporal_bucket(kind, row["status"])})
+        elif kind == "plan":
+            row = connection.execute("SELECT id,domain,title,steps_json,status,result,decision_id,updated_at FROM plans WHERE id=?", (node_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row); item["steps"] = _json_value(item.pop("steps_json"), []); item.update({"kind": kind, "temporal_bucket": _space_temporal_bucket(kind, row["status"])})
+        else:
+            row = connection.execute("""SELECT e.id,e.summary,e.event_type,e.occurred_at,e.plan_id,e.decision_id,COALESCE(p.domain,d.domain,'other') AS domain
+                FROM execution_events e LEFT JOIN plans p ON p.id=e.plan_id LEFT JOIN decisions d ON d.id=e.decision_id WHERE e.id=?""", (node_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row); item.update({"kind": kind, "status": row["event_type"], "temporal_bucket": "history"})
+    item["domain"] = canonical_domain(str(item.get("domain") or item.get("category") or "other"))
+    if item["domain"] in {"finance", "relationship", "health"} and not include_sensitive:
+        for field in ("summary", "title", "question", "decision", "selected_option", "rationale", "result", "later_evaluation", "steps"):
+            if field in item:
+                item[field] = "機微情報（マスク中）"
+        item["masked"] = True
+    else:
+        item["masked"] = False
+    return item
+
+
 def _space_temporal_bucket(kind: str, status: object) -> str:
     state = str(status or "").lower()
     if kind == "fact":
@@ -7552,6 +7597,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 180
             return self.send_json(personal_space_projection(include_sensitive, limit))
+        if path.startswith("/api/personal-space/nodes/"):
+            query = parse_qs(urlparse(self.path).query)
+            parts = path.rstrip("/").split("/")
+            try:
+                detail = personal_space_node_detail(parts[-2], int(parts[-1]), query.get("include_sensitive", ["false"])[0].lower() == "true")
+            except (ValueError, IndexError):
+                detail = None
+            return self.send_json(detail or {"error": "Not found"}, HTTPStatus.OK if detail else HTTPStatus.NOT_FOUND)
         if path == "/api/search":
             query = parse_qs(urlparse(self.path).query)
             message = query.get("q", [""])[0].strip()
