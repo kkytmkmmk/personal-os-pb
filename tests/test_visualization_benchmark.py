@@ -87,8 +87,8 @@ class VisualizationBenchmarkTests(unittest.TestCase):
             self.assertIn("personal_contract_missing", {reason["code"] for reason in comparison["reasons"]})
 
     def test_normalizes_explicit_monetary_units_and_rejects_unknown_units(self):
-        self.assertEqual(app.normalize_benchmark_value(18, "万円", "JPY"), (180000.0, "JPY"))
-        self.assertEqual(app.normalize_benchmark_value(180000, "円", "JPY"), (180000.0, "JPY"))
+        self.assertEqual(app.normalize_benchmark_value(19, "万円", "JPY"), (190000.0, "JPY"))
+        self.assertEqual(app.normalize_benchmark_value(190000, "円", "JPY"), (190000.0, "JPY"))
         self.assertEqual(app.normalize_benchmark_value(18, "mystery", "JPY"), (None, None))
 
     def test_bundle_validation_rolls_back_all_datasets_and_decodes_distribution(self):
