@@ -222,6 +222,22 @@ class VisualizationBenchmarkTests(unittest.TestCase):
             self.assertTrue(row["matched_current_fact"])
             self.assertIn({"fact_key": "finance.asset_balance.total_assets", "count": 1}, row["candidate_fact_keys"])
 
+    def test_registry_resolves_all_declared_personal_fact_keys(self):
+        expected = {
+            "work.annual_income": ("work.annual_income", "JPY", "annual"),
+            "housing.monthly_rent": ("housing.monthly_rent", "JPY", "monthly"),
+            "life.sleep_duration": ("life.sleep_duration", "hours", "daily"),
+        }
+        for fact_key, (metric_key, unit, time_basis) in expected.items():
+            with self.subTest(fact_key=fact_key):
+                contract = app.resolve_personal_metric_contract(fact_key)
+                self.assertIsNotNone(contract)
+                self.assertEqual(contract["metric_key"], metric_key)
+                self.assertEqual(contract["canonical_unit"], unit)
+                self.assertEqual(contract["time_basis"], time_basis)
+        self.assertTrue(all("personal_fact_keys" in definition for definition in app.BENCHMARK_METRIC_CONTRACTS.values()))
+        self.assertTrue(all("fact_keys" not in definition for definition in app.BENCHMARK_METRIC_CONTRACTS.values()))
+
 
 if __name__ == "__main__":
     unittest.main()

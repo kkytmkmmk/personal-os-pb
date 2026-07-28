@@ -3043,9 +3043,9 @@ BENCHMARK_FACT_KEY_ALIASES: dict[str, tuple[str, ...]] = {}
 BENCHMARK_METRIC_CONTRACTS: dict[str, dict[str, object]] = {
     "finance.total_assets": {"personal_fact_keys": ("finance.total_assets", "finance.asset_balance.total_assets"), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
     "finance.financial_assets": {"personal_fact_keys": ("finance.financial_assets", "finance.asset_balance.financial_assets"), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
-    "work.annual_income": {"fact_keys": ("work.annual_income",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "annual"},
-    "housing.monthly_rent": {"fact_keys": ("housing.monthly_rent",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "monthly"},
-    "life.sleep_duration": {"fact_keys": ("life.sleep_duration",), "canonical_unit": "hours", "statistical_unit": "individual", "measurement_kind": "duration", "time_basis": "daily"},
+    "work.annual_income": {"personal_fact_keys": ("work.annual_income",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "annual"},
+    "housing.monthly_rent": {"personal_fact_keys": ("housing.monthly_rent",), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "flow", "time_basis": "monthly"},
+    "life.sleep_duration": {"personal_fact_keys": ("life.sleep_duration",), "canonical_unit": "hours", "statistical_unit": "individual", "measurement_kind": "duration", "time_basis": "daily"},
 }
 BENCHMARK_CONTRACT_FIELDS = ("metric_key", "statistical_unit", "measurement_kind", "time_basis", "canonical_unit")
 
