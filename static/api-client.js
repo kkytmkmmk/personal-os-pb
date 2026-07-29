@@ -68,7 +68,9 @@
       if (failure) {
         const detail = { request_id: requestId, error_type: classify(0, failure), message: failure.message || 'Network request failed', path: url, method };
         window.dispatchEvent(new CustomEvent('personal-os-api-error', { detail }));
-        const tagged = Object.assign(failure, detail, { idempotent: Boolean(idempotent) });
+        // DOMException.message can be read-only in some browsers.  Do not
+        // mutate the browser exception while constructing a retryable error.
+        const tagged = Object.assign(new Error(detail.message), detail, { cause: failure, idempotent: Boolean(idempotent) });
         if (isRetryable(method, 0, tagged, allowRetry) && attempt < RETRIES) { await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1))); continue; }
         throw tagged;
       }
@@ -97,7 +99,7 @@
       if (response.ok && new URL(url, window.location.href).pathname === '/api/chat') {
         response.clone().json().then(data => window.dispatchEvent(new CustomEvent('personal-os-chat-response', { detail: data }))).catch(() => {});
       }
-      window.dispatchEvent(new CustomEvent('personal-os-api-response', { detail: { request_id: response.request_id, path: new URL(url, window.location.href).pathname, status: response.status, ok: response.ok } }));
+      window.dispatchEvent(new CustomEvent('personal-os-api-response', { detail: { request_id: response.request_id, path: new URL(url, window.location.href).pathname, method, status: response.status, ok: response.ok } }));
       if (isRetryable(method, response.status, null, allowRetry) && attempt < RETRIES) { await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1))); continue; }
       return response;
     }

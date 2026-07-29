@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tools.build_public_snapshot import ROOT, build_snapshot, local_replacements
 from tools.check_public_safety import find_public_safety_issues
+from tools.check_public_screenshots import find_screenshot_issues
 from tools.check_tracked_private_files import tracked_private_files
 
 
@@ -38,6 +39,15 @@ class PublicReleaseTests(unittest.TestCase):
             self.assertIn("$PSScriptRoot", script)
             self.assertIn("Push-Location $projectRoot", script)
             self.assertNotIn("C:\\Users\\", script)
+
+    def test_reviewed_synthetic_screenshots_are_safe_and_public(self):
+        self.assertEqual(find_screenshot_issues(ROOT), [])
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "public"
+            build_snapshot(snapshot)
+            self.assertTrue((snapshot / "docs" / "screenshots" / "ux-phase5" / "manifest.json").is_file())
+            self.assertTrue((snapshot / "docs" / "screenshots" / "ux-phase5" / "desktop-1280-today.png").is_file())
+            self.assertTrue((snapshot / "docs" / "ux_phase5_visual_review.md").is_file())
 
 
 if __name__ == "__main__":

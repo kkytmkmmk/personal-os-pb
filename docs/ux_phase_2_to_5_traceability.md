@@ -10,11 +10,11 @@
 | 3 | Exploreに入力Formを常駐させず、Benchmark取込をSheetに隔離 | `streamlineExplore`、`benchmark-import-sheet` | UI静的テスト、Benchmark importテスト | Done |
 | 4 | Mobile/Draft/Empty state | `sessionStorage` Draft、`data-space-record`、PWA cache v2 | `test_empty_personal_space_can_return_to_recording`、`test_mobile_sheets_preserve_focus_and_pwa_shell_is_refreshed` | Done |
 | 5 | A11y: label、live region、Sheet focus、Escape、reduced motion、Canvas fallback、44px | `static/index.html`、`static/daily-ux.js`、`static/styles.css`、`static/visualization.js` | UI静的テスト | Done |
-| 5 | Desktop/Mobile Browser E2Eの自動化 | ブラウザ受入手順は `docs/usability_audit.md` に記載 | Verification環境で画面読取は実施。クリック実行は制御層の `SyntaxError` により再実行不能 | Partial |
+| 5 | Desktop/Mobile Browser E2Eの自動化 | `tools/run_ux_e2e.py` と `requirements-dev.txt`。Verification環境・一時SQLite・固定Synthetic DataでPlaywrightがServerを起動し、実クリック、実入力、実API応答、Console Error、横Overflow、Screenshotを検査 | Desktop 1280 × 720とMobile 390 × 844の受入Journeyを実行。レビュー済みScreenshotはManifestとSafety Scanを通過して公開Snapshotへ限定連携 | Done |
 
 ## 回帰保護
 
 - `static/index.html` のToday候補更新はカード参照を自前で初期化し、`ReferenceError` を起こさない。
-- `static/service-worker.js` は `personal-os-v3-daily-ux-2` とし、今回の画面資産を旧キャッシュから分離する。
+- `static/service-worker.js` は `personal-os-v3-daily-ux-phase5` とし、今回の画面資産を旧キャッシュから分離する。
 - 結果・後日評価の通常導線にBrowserの `prompt()` を使わない。
 - 相談の不足情報は最大3件で、Factを自動作成しない。

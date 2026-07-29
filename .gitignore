@@ -23,3 +23,4 @@ attachments/
 .private_terms
 .DS_Store
 Thumbs.db
+test-results/

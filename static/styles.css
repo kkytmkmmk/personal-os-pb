@@ -47,13 +47,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Bottom sheets are used for quick capture and the mobile secondary menu. */
 .ui-sheet[hidden] { display: none !important; }
 .ui-sheet { position: fixed; inset: 0; z-index: 20; }
+.sheet-open { overflow: hidden; overscroll-behavior: none; }
 .ui-sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.62); }
 .ui-sheet-panel { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: min(100%, 560px); max-height: min(80vh, 720px); overflow: auto; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); background: var(--panel); border: 1px solid var(--line); border-bottom: 0; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.3); }
 .ui-sheet-panel h2 { margin-top: 0; }
+.ui-sheet-panel:focus { outline: 2px solid var(--accent); outline-offset: -4px; }
 .ui-sheet-panel > button { display: block; width: 100%; margin: 8px 0; text-align: left; }
 .ui-sheet-grabber { width: 42px; height: 4px; margin: 0 auto 14px; border-radius: 99px; background: var(--muted); opacity: .7; }
 .sheet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
 .sheet-grid button { width: 100%; }
+.domain-current,.domain-recent,.domain-decisions,.domain-history,.domain-evidence { margin: 18px 0; }
+.domain-current > h3,.domain-recent > h3,.domain-decisions > h3,.domain-history > h3,.domain-evidence > h3 { margin: 0 0 10px; }
+.domain-evidence details { margin: 8px 0; }
 .secondary-grid button { font-size: .9rem; }
 .daily-actions-card { border-color: var(--accent); }
 .daily-actions-card .actions { margin-bottom: 0; }

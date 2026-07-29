@@ -40,7 +40,7 @@
 
 ## Verification結果（2026-07-29）
 
-フェーズ2〜5の実装・回帰保護の対応表は [UXフェーズ2〜5トレーサビリティ](ux_phase_2_to_5_traceability.md) を参照する。Browserの画面読取はVerification環境で確認した。一方、この実行環境ではBrowser制御層がクリック実行時に `SyntaxError` を返すため、Browser操作自動化の再実行はPartialとして記録する。
+フェーズ2〜5の実装・回帰保護の対応表は [UXフェーズ2〜5トレーサビリティ](ux_phase_2_to_5_traceability.md) を参照する。Browser E2Eはリポジトリ内のPlaywright実行へ移し、Verification環境・一時SQLite・合成データだけでDesktop 1280 × 720とMobile 390 × 844の実クリック、実入力、実API応答、Console Error検査、Screenshot取得を再現可能にした。外部Browser制御層は受入の前提にしない。
 
 - Desktop 1280 × 720: 今日の「相談する」「記録する」、領域Menu、探索内のBenchmark取込Sheetを確認した。
 - Mobile 390 × 844: Bottom Navigationの全Touch Targetが44px以上で、横Overflowがないことを確認した。`＋ → 記録 → 相談 → その他 → 記憶` の遷移後も記録Draftが残った。

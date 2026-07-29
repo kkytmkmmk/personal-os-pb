@@ -48,6 +48,12 @@ DEFAULT_DB_PATH = (
 DB_PATH = Path(os.environ.get("PERSONAL_OS_DB_PATH", str(DEFAULT_DB_PATH))).resolve()
 BACKUP_DIR = Path(os.environ.get("PERSONAL_OS_BACKUP_DIR", str(DB_PATH.parent / "backups"))).resolve()
 ATTACHMENT_DIR = Path(os.environ.get("PERSONAL_OS_ATTACHMENT_DIR", str(DB_PATH.parent / "attachments"))).resolve()
+# Browser acceptance tests can request a bounded, verification-only response
+# delay to capture the real submitting UI. Production never reads this value.
+try:
+    E2E_CHAT_DELAY_SECONDS = min(2.0, max(0.0, float(os.environ.get("PERSONAL_OS_E2E_CHAT_DELAY_MS", "0")) / 1000.0)) if APP_ENV == "verification" else 0.0
+except ValueError:
+    E2E_CHAT_DELAY_SECONDS = 0.0
 ANALYSIS_THREAD_LOCK = threading.Lock()
 ANALYSIS_PREFILTER_LOCK = threading.Lock()
 ANALYSIS_PREFILTER_SCOPE: tuple[str, str, str] | None = None
@@ -8128,6 +8134,8 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 record_llm_trace("response_parsed", provider=selected_provider("chat"),
                                  model=provider_model(selected_provider("chat"), "chat"), request_id=request_id)
+                if E2E_CHAT_DELAY_SECONDS:
+                    time.sleep(E2E_CHAT_DELAY_SECONDS)
                 return self.send_json({
                     "answer": answer,
                     "memories": memories,

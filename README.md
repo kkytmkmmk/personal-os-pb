@@ -2,6 +2,16 @@
 
 # Personal OS
 
+## UX screenshots
+
+All public screenshots use fixed synthetic verification data only.
+
+![Desktop Today](docs/screenshots/ux-phase5/desktop-1280-today.png)
+
+![Mobile Today](docs/screenshots/ux-phase5/mobile-390-today.png)
+
+See [UX Phase 5 Visual Review](docs/ux_phase5_visual_review.md) for the review conditions and representative screens.
+
 ## Rebuild additions (2026-07-26)
 
 - `facts` is the canonical structured-memory layer. `entries` and `structured_memories` remain legacy migration sources and are not used by new projections.

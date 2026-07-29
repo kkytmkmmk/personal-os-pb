@@ -37,7 +37,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-daily-ux-2", self.sw)
+        self.assertIn("personal-os-v3-daily-ux-phase5", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
@@ -98,7 +98,21 @@ class UiPhase2StaticTests(unittest.TestCase):
     def test_mobile_sheets_preserve_focus_and_pwa_shell_is_refreshed(self):
         self.assertIn("const sheetOpeners = new Map()", self.daily_ux)
         self.assertIn("sheetOpeners.get(sheet.id)", self.daily_ux)
-        self.assertIn("personal-os-v3-daily-ux-2", self.sw)
+        self.assertIn("window.personalOsSheets", self.daily_ux)
+        self.assertIn("focusableIn", self.daily_ux)
+        self.assertIn("classList.add('sheet-open')", self.daily_ux)
+        self.assertIn("personal-os-v3-daily-ux-phase5", self.sw)
+
+    def test_capture_only_confirms_after_response_and_domain_renderer_is_shared(self):
+        self.assertIn("保存しています…", self.daily_ux)
+        self.assertIn("保存できませんでした。入力内容は保持しています", self.daily_ux)
+        self.assertIn("personal-os-api-response", self.daily_ux)
+        self.assertIn("domain-current", self.daily_ux)
+        self.assertIn("domain-recent", self.daily_ux)
+        self.assertIn("domain-decisions", self.daily_ux)
+        self.assertIn("domain-history", self.daily_ux)
+        self.assertIn("domain-evidence", self.daily_ux)
+        self.assertIn("personalOsRenderDomain", self.daily_ux)
 
     def test_today_candidate_refresh_owns_its_card_reference(self):
         self.assertIn("let card = document.querySelector('#today-next-candidates');", self.index)

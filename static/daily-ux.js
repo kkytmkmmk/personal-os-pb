@@ -9,30 +9,47 @@
   const visible = element => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
   const navigate = tab => window.personalOsNavigate?.(tab);
   const sheetOpeners = new Map();
+  let activeSheet = null;
+
+  const focusableIn = sheet => $$('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])', sheet)
+    .filter(element => visible(element));
 
   function openSheet(id, opener) {
     const sheet = $(`#${id}`);
     if (!sheet) return;
+    if (activeSheet && activeSheet !== sheet) closeSheet(activeSheet, false);
     if (opener) sheetOpeners.set(id, opener);
     sheet.hidden = false;
     sheet.classList.remove('hidden');
-    $('.ui-sheet-panel button, .ui-sheet-panel input, .ui-sheet-panel textarea', sheet)?.focus();
+    document.body.classList.add('sheet-open');
+    activeSheet = sheet;
+    window.setTimeout(() => focusableIn(sheet)[0]?.focus(), 0);
   }
 
-  function closeSheet(sheet) {
+  function closeSheet(sheet, restoreFocus = true) {
     if (!sheet) return;
     sheet.hidden = true;
     sheet.classList.add('hidden');
+    if (activeSheet === sheet) activeSheet = null;
+    if (!$$('.ui-sheet:not([hidden])').length) document.body.classList.remove('sheet-open');
     const opener = sheetOpeners.get(sheet.id);
-    opener?.focus();
+    if (restoreFocus && opener && document.contains(opener)) opener.focus();
   }
 
   function wireStaticSheets() {
     $$('[data-action="domains"]').forEach(button => button.addEventListener('click', () => openSheet('domains-sheet', button)));
     $$('[data-sheet-close]').forEach(button => button.addEventListener('click', () => closeSheet(button.closest('.ui-sheet'))));
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') $$('.ui-sheet:not([hidden])').forEach(closeSheet);
+      if (!activeSheet) return;
+      if (event.key === 'Escape') { event.preventDefault(); closeSheet(activeSheet); return; }
+      if (event.key !== 'Tab') return;
+      const targets = focusableIn(activeSheet);
+      if (!targets.length) { event.preventDefault(); return; }
+      const first = targets[0], last = targets[targets.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     });
+    window.personalOsSheets = { open: openSheet, close: closeSheet };
   }
 
   function addDraft(field, key) {
@@ -48,28 +65,57 @@
     if (key) sessionStorage.removeItem(key);
   }
 
+  const mutationConfig = {
+    'record-form': { path: '/api/ingest', method: 'POST', notice: '#record-notice', success: '保存しました。AIがバックグラウンドで整理します。' },
+    'screenshot-form': { path: '/api/import/screenshot', method: 'POST', notice: '#screenshot-notice', success: '保存しました。AIがバックグラウンドで整理します。' },
+    'benchmark-import-form': { path: '/api/benchmarks/import', method: 'POST', notice: '#benchmark-import-notice', success: '保存しました。' },
+    'decision-outcome-form': { path: '/api/decisions/', method: 'PATCH', notice: '#decision-outcome-notice', success: '保存しました。' },
+  };
+
+  function mutationFor(form) { return mutationConfig[form?.id] || null; }
+  function setMutationState(form, state, message = '') {
+    const config = mutationFor(form); if (!config) return;
+    form.dataset.submitting = state === 'submitting' ? 'true' : 'false';
+    form.dataset.mutationState = state;
+    const submit = form.querySelector('button[type="submit"], button:not([type])');
+    if (submit) {
+      if (!submit.dataset.label) submit.dataset.label = submit.textContent || '保存する';
+      submit.disabled = state === 'submitting';
+      submit.textContent = state === 'submitting' ? '保存しています…' : submit.dataset.label;
+    }
+    const notice = $(config.notice);
+    if (notice && message) notice.textContent = message;
+  }
+  function matchesMutation(form, detail) {
+    const config = mutationFor(form);
+    return Boolean(config && detail && detail.method === config.method
+      && (config.path.endsWith('/') ? String(detail.path || '').startsWith(config.path) : detail.path === config.path));
+  }
+
   function wireMutationState() {
     document.addEventListener('submit', event => {
       const form = event.target;
-      if (!(form instanceof HTMLFormElement) || !form.matches('#record-form,#screenshot-form,#benchmark-import-form,#decision-outcome-form')) return;
+      if (!(form instanceof HTMLFormElement) || !mutationFor(form)) return;
       if (form.dataset.submitting === 'true') { event.preventDefault(); return; }
-      form.dataset.submitting = 'true';
-      const submit = form.querySelector('button[type="submit"], button:not([type])');
-      if (submit) { submit.dataset.label = submit.textContent; submit.disabled = true; submit.textContent = '保存中…'; }
+      setMutationState(form, 'submitting', '保存しています…');
       window.setTimeout(() => {
         if (form.dataset.submitting !== 'true') return;
-        form.dataset.submitting = 'false';
-        if (submit) { submit.disabled = false; submit.textContent = submit.dataset.label || '保存する'; }
+        setMutationState(form, 'error', '保存できませんでした。入力内容は保持しています。再試行してください。');
       }, 45000);
     }, true);
     window.addEventListener('personal-os-api-response', event => {
-      if (!event.detail?.ok) return;
       $$('#record-form,#screenshot-form,#benchmark-import-form,#decision-outcome-form').forEach(form => {
-        if (form.dataset.submitting !== 'true') return;
-        form.dataset.submitting = 'false';
-        const submit = form.querySelector('button[type="submit"], button:not([type])');
-        if (submit) { submit.disabled = false; submit.textContent = submit.dataset.label || '保存する'; }
+        if (form.dataset.submitting !== 'true' || !matchesMutation(form, event.detail)) return;
+        if (!event.detail.ok) { setMutationState(form, 'error', '保存できませんでした。入力内容は保持しています。'); return; }
+        setMutationState(form, 'success', mutationFor(form).success);
         clearDraftFor(form);
+      });
+    });
+    window.addEventListener('personal-os-api-error', event => {
+      $$('#record-form,#screenshot-form,#benchmark-import-form,#decision-outcome-form').forEach(form => {
+        if (form.dataset.submitting === 'true' && matchesMutation(form, event.detail)) {
+          setMutationState(form, 'error', '保存できませんでした。入力内容は保持しています。');
+        }
       });
     });
   }
@@ -100,7 +146,7 @@
     }
     form?.addEventListener('submit', () => {
       const notice = $('#record-notice');
-      if (notice) notice.textContent = '保存しました。AIがバックグラウンドで整理します。';
+      if (notice) notice.textContent = '保存しています…';
     });
     addDraft($('#record-text'), 'memo');
     addDraft($('#screenshot-form [name="context"]'), 'screenshot-context');
@@ -309,33 +355,49 @@
   }
 
   function standardizeDomainViews() {
-    const legacyRefresh = window.refreshDomain;
-    if (typeof legacyRefresh !== 'function' || legacyRefresh.dailyUxWrapped) return;
+    if (window.refreshDomain?.dailyUxWrapped) return;
     const categoryAliases = { money: ['finance'], people: ['relationship'], travel: ['travel'], housing: ['housing'] };
-    const wrapped = async domain => {
-      await legacyRefresh(domain);
-      const root = $(`#${domain}-content`);
-      if (!root) return;
-      root.querySelectorAll('.domain-recent-changes').forEach(node => node.remove());
-      root.querySelectorAll('.domain-fact > .source').forEach(source => {
-        if (!source.textContent.trim().startsWith('根拠:') || source.parentElement?.querySelector(':scope > details.technical-detail')) return;
-        const evidence = source.nextElementSibling?.matches('details') ? source.nextElementSibling : null;
-        const details = document.createElement('details'); details.className = 'technical-detail';
-        details.innerHTML = '<summary>根拠と抽出情報</summary>';
-        source.before(details); details.append(source);
-        if (evidence) details.append(evidence);
-      });
+    const labels = { money: '資産', travel: '旅行', housing: '住居', people: '人間関係' };
+    const empty = (message, action = true) => `<div class="empty-state"><p>${escapeHtml(message)}</p>${action ? '<button type="button" class="secondary" data-domain-record>記録する</button>' : ''}</div>`;
+    const value = fact => {
       try {
+        const data = JSON.parse(fact.value_json || '{}');
+        return [data.asset, data.amount !== undefined && data.amount !== null ? `${Number(data.amount).toLocaleString('ja-JP')} ${data.currency || ''}`.trim() : '', data.value].filter(Boolean).join(' / ');
+      } catch { return ''; }
+    };
+    const factCard = (fact, compact = false) => {
+      const amount = (() => { try { return JSON.parse(fact.value_json || '{}').amount ?? ''; } catch { return ''; } })();
+      const evidence = fact.evidence ? `<details class="technical-detail"><summary>根拠と抽出情報</summary><p class="source">${escapeHtml(fact.document_title || '原文')} / ${escapeHtml(fact.extractor || '')} ${escapeHtml(fact.extractor_model || '')} / Evidence ${Number(fact.evidence_count || 0)}件</p><div class="body">${escapeHtml(String(fact.evidence).slice(0, 1200))}</div></details>` : '<p class="help">確認できる根拠がまだありません。</p>';
+      return `<article class="domain-fact ${fact.status === 'current' ? 'current-card' : ''}"><b>${escapeHtml(fact.summary || '記録')}</b>${compact ? '' : `<div>${escapeHtml(value(fact) || fact.fact_key || '')}</div>`}<div class="source">${fact.status === 'current' ? '現在の情報' : '過去の記録'} ・ 確からしさ ${Math.round((Number(fact.truth_confidence ?? fact.confidence) || 0) * 100)}%</div>${compact ? '' : `<div class="actions"><button type="button" class="secondary" data-domain-correct="${Number(fact.id)}" data-domain-summary="${encodeURIComponent(fact.summary || '')}" data-domain-amount="${encodeURIComponent(String(amount))}">訂正する</button></div>`}${evidence}</article>`;
+    };
+    const currentSummary = (domain, summary = {}) => {
+      if (domain === 'money') return `<div class="summary-grid"><div><span>総資産</span><b>${summary.total_assets === null || summary.total_assets === undefined ? '未登録' : `${Number(summary.total_assets).toLocaleString('ja-JP')}円`}</b></div><div><span>月間積立</span><b>${summary.monthly_investment === null || summary.monthly_investment === undefined ? '未登録' : `${Number(summary.monthly_investment).toLocaleString('ja-JP')}円`}</b></div><div><span>構成</span><b>${Object.keys(summary.breakdown || {}).length}種</b></div><div><span>実取引</span><b>${Number(summary.transaction_count || 0)}件</b></div></div>`;
+      if (domain === 'travel') return `<div class="summary-grid"><div><span>次の旅行</span><b>${escapeHtml((summary.upcoming || []).join('、') || '未定')}</b></div><div><span>訪問地</span><b>${Number((summary.visited_places || []).length)}件</b></div><div><span>行きたい場所</span><b>${Number((summary.wanted_places || []).length)}件</b></div><div><span>旅行傾向</span><b>${escapeHtml((summary.preferences || []).slice(0, 2).join(' / ') || '未登録')}</b></div></div>`;
+      if (domain === 'housing') return `<div class="summary-grid"><div><span>現住居</span><b>${Number((summary.current || []).length) ? '登録済み' : '未登録'}</b></div><div><span>希望条件</span><b>${Number((summary.preferences || []).length)}件</b></div><div><span>更新時期</span><b>${escapeHtml(summary.renewal || '未登録')}</b></div><div><span>検討候補</span><b>${Number((summary.candidates || []).length)}件</b></div></div>`;
+      return `<div class="summary-grid"><div><span>最近の人物</span><b>${Number(summary.people_count || 0)}人</b></div><div><span>次の予定</span><b>${Number(summary.next_plans || 0)}件</b></div><div><span>結果待ち</span><b>${Number(summary.pending_results || 0)}件</b></div><div><span>タイムライン</span><b>${Number(summary.timeline_count || 0)}件</b></div></div>`;
+    };
+    const wrapped = async domain => {
+      const root = $(`#${domain}-content`); if (!root) return;
+      root.setAttribute('aria-busy', 'true');
+      try {
+        const [projectionResponse, changesResponse] = await Promise.all([fetch(`/api/domains/${domain}`), fetch('/api/memory-changes')]);
+        if (!projectionResponse.ok) throw new Error('domain fetch failed');
+        const data = await projectionResponse.json();
+        const changes = changesResponse.ok ? await changesResponse.json() : [];
         const aliases = categoryAliases[domain] || [domain];
-        const changes = await fetch('/api/memory-changes').then(response => response.ok ? response.json() : []);
-        const relevant = (changes || []).filter(change => aliases.includes(change.category)).slice(0, 3);
-        if (!relevant.length) return;
-        const section = document.createElement('section'); section.className = 'domain-recent-changes summary-card';
-        section.innerHTML = `<h3>最近の変化</h3>${relevant.map(change => `<div class="summary-line"><span>${escapeHtml(change.fact_summary || '記憶の更新')}</span><b>${escapeHtml(change.change_type || '更新')}</b></div>`).join('')}`;
-        (root.querySelector('.domain-grid') || root.querySelector('h3'))?.before(section);
-      } catch { /* Changes are supplementary. Domain facts remain available. */ }
+        const recent = (changes || []).filter(change => aliases.includes(change.category)).slice(0, 3);
+        const decisions = (data.decisions || []).slice(0, 8);
+        const history = [...(data.history || [])];
+        if (domain === 'money') history.push(...(data.transactions || []).map(transaction => ({ id: `transaction-${transaction.fact_id}`, summary: `${transaction.asset || transaction.summary || '実取引'} ${Number(transaction.normalized_amount ?? transaction.amount ?? 0).toLocaleString('ja-JP')} ${transaction.currency || ''}`, status: 'historical', confidence: transaction.confidence, evidence: transaction.evidence, document_title: transaction.document_title, extractor: '取引集計', value_json: '{}' })));
+        root.innerHTML = `<section class="domain-current"><h3>現在の要約</h3><div class="summary-card">${currentSummary(domain, data.summary || {})}</div><div class="domain-grid">${(data.current || []).map(item => factCard(item)).join('') || empty('現在の情報がまだありません')}</div></section><section class="domain-recent"><h3>最近の変化</h3><div class="domain-recent-changes summary-card">${recent.length ? recent.map(change => `<div class="summary-line"><span>${escapeHtml(change.fact_summary || '記憶の更新')}</span><b>${escapeHtml(change.change_type || '更新')}</b></div>`).join('') : empty('最近の変化はまだありません', false)}</div></section><section class="domain-decisions"><h3>関連する判断</h3>${decisions.length ? decisions.map(decision => `<article class="domain-fact"><b>${escapeHtml(decision.title || decision.decision || '判断')}</b><div class="source">${escapeHtml(decision.status || decision.decision_state || '')}</div>${decision.result ? `<details><summary>結果を表示</summary><div class="body">${escapeHtml(decision.result)}</div></details>` : '<p class="help">結果待ちです</p>'}</article>`).join('') : empty('この領域の進行中の判断はありません', false)}</section><section class="domain-history"><h3>履歴</h3>${history.length ? history.map(item => factCard(item, true)).join('') : empty('まだ履歴はありません')}</section><section class="domain-evidence"><h3>根拠</h3>${(data.current || []).length ? (data.current || []).map(item => `<details class="technical-detail"><summary>${escapeHtml(item.summary || '記憶')} の根拠</summary><p class="source">${escapeHtml(item.document_title || '原文')} / ${escapeHtml(item.extractor || '')} ${escapeHtml(item.extractor_model || '')} / Evidence ${Number(item.evidence_count || 0)}件</p><div class="body">${escapeHtml(String(item.evidence || '確認できる根拠がまだありません。').slice(0, 1200))}</div></details>`).join('') : empty('確認できる根拠がまだありません')}</section>`;
+        $$('[data-domain-record]', root).forEach(button => button.addEventListener('click', () => { navigate('home'); window.setTimeout(() => $('#record-text')?.focus(), 0); }));
+        $$('[data-domain-correct]', root).forEach(button => button.addEventListener('click', () => window.correctDomainFact?.(Number(button.dataset.domainCorrect), button.dataset.domainSummary || '', button.dataset.domainAmount || '')));
+      } catch {
+        root.innerHTML = `<section class="domain-current"><h3>${labels[domain] || '領域'}の情報</h3>${empty('情報を読み込めませんでした。入力内容は失われていません。')}</section>`;
+      } finally { root.removeAttribute('aria-busy'); }
     };
     wrapped.dailyUxWrapped = true;
+    window.personalOsRenderDomain = wrapped;
     window.refreshDomain = wrapped;
   }
 
@@ -367,6 +429,14 @@
     });
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+  // Register before app.js handles the initial hash route so direct Domain
+  // links never produce a legacy-only first render.
+  standardizeDomainViews();
+  // app.js has a few legacy DOMContentLoaded initialisers.  Defer this final
+  // UX composition one task so its unified renderers remain the active ones.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => window.setTimeout(init, 0), { once: true });
   else init();
+  // Legacy inline scripts can finish their own first render after the deferred
+  // bundle. Re-apply the decision renderer once the document is fully ready.
+  window.addEventListener('load', streamlineDecisions, { once: true });
 })();

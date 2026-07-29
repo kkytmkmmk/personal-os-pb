@@ -106,7 +106,8 @@
     if (canonical === 'today' && typeof refreshToday === 'function') refreshToday();
     if (canonical === 'today') refreshTodayCycleSummary();
     if (canonical === 'settings' && typeof refreshSettings === 'function') refreshSettings();
-    if (['money', 'travel', 'housing', 'people'].includes(canonical) && typeof refreshDomain === 'function') refreshDomain(canonical);
+    const renderDomain = window.personalOsRenderDomain || window.refreshDomain;
+    if (['money', 'travel', 'housing', 'people'].includes(canonical) && typeof renderDomain === 'function') renderDomain(canonical);
     if (canonical === 'decisions' && typeof refreshDecisions === 'function') refreshDecisions();
   }
 
@@ -125,6 +126,7 @@
   }
 
   function openSheet(id, opener) {
+    if (window.personalOsSheets?.open) return window.personalOsSheets.open(id, opener);
     const sheet = document.getElementById(id);
     if (!sheet) return;
     lastFocus = opener || document.activeElement;
@@ -136,6 +138,7 @@
   }
 
   function closeSheet(sheet) {
+    if (window.personalOsSheets?.close) return window.personalOsSheets.close(sheet);
     if (!sheet) return;
     sheet.hidden = true;
     sheet.classList.add('hidden');
@@ -225,9 +228,11 @@
       try {
         const response = await fetch('/api/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
         const data = await response.json().catch(() => ({}));
-        notice.textContent = response.ok ? (data.warning || data.message || '保存しました。解析Jobへ送信しました。') : (data.error || '保存できませんでした。');
+        notice.textContent = response.ok
+          ? '保存しました。AIがバックグラウンドで整理します。'
+          : (data.error || '保存できませんでした。入力内容は保持しています。');
         if (response.ok) { field.value = ''; sessionStorage.removeItem('personal-os-draft-memo'); if (typeof refresh === 'function') refresh(); }
-      } catch (error) { notice.textContent = '通信に失敗しました。入力内容は保持しています。'; }
+      } catch (error) { notice.textContent = '保存できませんでした。入力内容は保持しています。'; }
       finally { button.disabled = false; }
     });
   }
