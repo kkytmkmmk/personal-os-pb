@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import struct
+import hashlib
 from pathlib import Path
 
 
@@ -51,7 +52,11 @@ def png_dimensions_and_metadata(path: Path) -> tuple[tuple[int, int] | None, lis
     return dimensions, issues
 
 
-def find_screenshot_issues(root: Path) -> list[str]:
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def find_screenshot_issues(root: Path, *, require_approval: bool = True) -> list[str]:
     directory = root.resolve() / SCREENSHOT_DIR
     if not directory.exists():
         return []
@@ -83,8 +88,13 @@ def find_screenshot_issues(root: Path) -> list[str]:
             issues.append(f"{name}: data_type must be synthetic")
         if item.get("contains_sensitive_data") is not False:
             issues.append(f"{name}: contains_sensitive_data must be false")
-        if item.get("reviewed") is not True:
-            issues.append(f"{name}: reviewed must be true")
+        if require_approval:
+            if item.get("reviewed") is not True:
+                issues.append(f"{name}: reviewed must be true")
+            if not isinstance(item.get("reviewed_at"), str) or not item["reviewed_at"].strip():
+                issues.append(f"{name}: reviewed_at is required")
+            if not isinstance(item.get("reviewed_by"), str) or not item["reviewed_by"].strip():
+                issues.append(f"{name}: reviewed_by is required")
         if not isinstance(item.get("route"), str) or not item["route"].startswith("#"):
             issues.append(f"{name}: route must be a hash route")
         if not isinstance(viewport, dict):
@@ -100,6 +110,12 @@ def find_screenshot_issues(root: Path) -> list[str]:
             continue
         if image.stat().st_size > MAX_BYTES:
             issues.append(f"{name}: exceeds {MAX_BYTES} bytes")
+        if require_approval:
+            expected_hash = item.get("sha256")
+            if not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+                issues.append(f"{name}: sha256 is required")
+            elif expected_hash != sha256_file(image):
+                issues.append(f"{name}: sha256 does not match PNG")
         actual, png_issues = png_dimensions_and_metadata(image)
         if actual != dimensions:
             issues.append(f"{name}: PNG dimensions {actual} do not match {dimensions}")

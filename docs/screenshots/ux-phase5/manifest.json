@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "generated_at": "2026-07-29T06:58:27.891125+00:00",
+  "generated_at": "2026-07-29T07:48:03.932088+00:00",
   "environment": "verification",
   "data_type": "synthetic",
   "screenshots": [
@@ -14,7 +14,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "cd63a8b079b8a487e2f1d0fdec23d91a0931d96c8b25efc7fa81a59a1d8edba5"
     },
     {
       "file": "desktop-1280-memory.png",
@@ -26,19 +29,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-chat-input.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#chat",
-      "state": "input",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "ee1c1e28a23fd54a153477ea90eb3ad0f79fa7266109d3b8a824c1e72a745b4f"
     },
     {
       "file": "desktop-1280-chat-loading.png",
@@ -50,7 +44,10 @@
       "state": "processing",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "1d0bc018b612f677aea40e124db4aa702226e150e4e3b144630cf9068b5b1f24"
     },
     {
       "file": "desktop-1280-chat-result.png",
@@ -62,19 +59,10 @@
       "state": "result",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-chat-evidence.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#chat",
-      "state": "evidence-open",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "1d0bc018b612f677aea40e124db4aa702226e150e4e3b144630cf9068b5b1f24"
     },
     {
       "file": "desktop-1280-decisions.png",
@@ -86,7 +74,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "1ece5eccd465f770702bb6dce7a22a7a608bbed55447205e5fd8daef932fa426"
     },
     {
       "file": "desktop-1280-decision-result-sheet.png",
@@ -98,7 +89,10 @@
       "state": "result-sheet",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "a4fa86ee310538043f7de53e7ac8043efa844b05efdb3bb2c61dc0a787f16351"
     },
     {
       "file": "desktop-1280-money.png",
@@ -110,43 +104,10 @@
       "state": "domain",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-travel.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#travel",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-housing.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#housing",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-people.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#people",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "ce243976ac024e12169e27838298558590a316b409195e4da855e7eaee6e074b"
     },
     {
       "file": "desktop-1280-explore-space.png",
@@ -158,19 +119,10 @@
       "state": "personal-space",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-explore-space-detail.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#explore",
-      "state": "node-detail",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "667d5b276068ec8ee2a879079cb5eb569c7172960e76ef81d9531d0bc64dbe2d"
     },
     {
       "file": "desktop-1280-benchmark.png",
@@ -182,55 +134,10 @@
       "state": "benchmark",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-benchmark-import-sheet.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#explore",
-      "state": "benchmark-import-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-admin.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#settings",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-error.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#memory",
-      "state": "synthetic-server-error",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1280-empty.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#memory",
-      "state": "empty-capture",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "52d08836821972bd3c06f098e60e4bb8b40c65e0730718a3c4cbe4b6221f2761"
     },
     {
       "file": "desktop-1440-today.png",
@@ -242,223 +149,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-memory.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#memory",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-chat-input.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#chat",
-      "state": "input",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-chat-loading.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#chat",
-      "state": "processing",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-chat-result.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#chat",
-      "state": "result",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-chat-evidence.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#chat",
-      "state": "evidence-open",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-decisions.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#decisions",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-decision-result-sheet.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#decisions",
-      "state": "result-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-money.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#money",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-travel.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#travel",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-housing.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#housing",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-people.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#people",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-explore-space.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#explore",
-      "state": "personal-space",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-explore-space-detail.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#explore",
-      "state": "node-detail",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-benchmark.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#explore",
-      "state": "benchmark",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-benchmark-import-sheet.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#explore",
-      "state": "benchmark-import-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-admin.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#settings",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-error.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#memory",
-      "state": "synthetic-server-error",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "desktop-1440-empty.png",
-      "viewport": {
-        "width": 1440,
-        "height": 900
-      },
-      "route": "#memory",
-      "state": "empty-capture",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "8c51eb61b4d872b1ee39b891193e3b25513adf068ce66a9313072569a94d135a"
     },
     {
       "file": "mobile-390-today.png",
@@ -470,31 +164,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-bottom-nav.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#today",
-      "state": "bottom-navigation",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-quick-sheet.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#today",
-      "state": "quick-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "cbe4d88200ad282eba4d25aee8c5803aca9415ff2cf9895c2ba2aad07fe0de55"
     },
     {
       "file": "mobile-390-memory.png",
@@ -506,7 +179,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "b8ad8a90751e445289dfe450af3b9311aea22b9f6214ecaee2cc7378e545b546"
     },
     {
       "file": "mobile-390-memory-image.png",
@@ -518,19 +194,10 @@
       "state": "image-input",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-chat-input.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#chat",
-      "state": "input",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "7a3e2cf848d56317f05cbc5732034285be5ed7b604994ff23cbe61996b5f9580"
     },
     {
       "file": "mobile-390-chat-result.png",
@@ -542,19 +209,10 @@
       "state": "result",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-chat-evidence.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#chat",
-      "state": "evidence-open",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "d48131d0ed719db0579cd7b8b35f81de875d48fb23aaf8f33492db72fb0280e0"
     },
     {
       "file": "mobile-390-decisions.png",
@@ -566,7 +224,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "665e211b07e4b560d1937a835419b2dd9db5f50d66d00359b17329ebf4e9f84c"
     },
     {
       "file": "mobile-390-decision-result-sheet.png",
@@ -578,7 +239,10 @@
       "state": "result-sheet",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "3f31ab7a5ff3891d1e413d17d02ecf6d7f3a12ec9e30034dcdea51220ceb5663"
     },
     {
       "file": "mobile-390-more-sheet.png",
@@ -590,19 +254,10 @@
       "state": "more-sheet",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-explore.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#explore",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "b29403b13e36591ceeca57bd3bb6211c648f7ba57d36575c4f885c3affc73710"
     },
     {
       "file": "mobile-390-explore-space.png",
@@ -614,19 +269,10 @@
       "state": "personal-space",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-explore-space-detail.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#explore",
-      "state": "node-detail",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "97d65736530f2259afa2baa61b65360c1dec26521f3b0b917636aab789e837c0"
     },
     {
       "file": "mobile-390-benchmark.png",
@@ -638,67 +284,10 @@
       "state": "benchmark",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-benchmark-import-sheet.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#explore",
-      "state": "benchmark-import-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-money.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#money",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-housing.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#housing",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-draft-restored.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#memory",
-      "state": "draft-retained",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-390-error.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#memory",
-      "state": "synthetic-server-error",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "10f24d9d4adcd957967f66006fb84baed5dc217c2ca2a19c5b7292d7af5d5c3a"
     },
     {
       "file": "mobile-375-today.png",
@@ -710,235 +299,10 @@
       "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-bottom-nav.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#today",
-      "state": "bottom-navigation",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-quick-sheet.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#today",
-      "state": "quick-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-memory.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#memory",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-memory-image.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#memory",
-      "state": "image-input",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-chat-input.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#chat",
-      "state": "input",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-chat-result.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#chat",
-      "state": "result",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-chat-evidence.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#chat",
-      "state": "evidence-open",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-decisions.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#decisions",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-decision-result-sheet.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#decisions",
-      "state": "result-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-more-sheet.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#decisions",
-      "state": "more-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-explore.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#explore",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-explore-space.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#explore",
-      "state": "personal-space",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-explore-space-detail.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#explore",
-      "state": "node-detail",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-benchmark.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#explore",
-      "state": "benchmark",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-benchmark-import-sheet.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#explore",
-      "state": "benchmark-import-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-money.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#money",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-housing.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#housing",
-      "state": "domain",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-draft-restored.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#memory",
-      "state": "draft-retained",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
-    },
-    {
-      "file": "mobile-375-error.png",
-      "viewport": {
-        "width": 375,
-        "height": 667
-      },
-      "route": "#memory",
-      "state": "synthetic-server-error",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T07:49:07.937978+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "85dbabaf58d9a8d71466b03b1e2c99d1071f21added76b295642e27819b18bcf"
     }
   ]
 }

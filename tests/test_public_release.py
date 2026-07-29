@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.build_public_snapshot import ROOT, build_snapshot, local_replacements
+from tools.build_public_snapshot import ROOT, build_snapshot, local_replacements, validate_public_pwa_assets
 from tools.check_public_safety import find_public_safety_issues
 from tools.check_public_screenshots import find_screenshot_issues
 from tools.check_tracked_private_files import tracked_private_files
@@ -22,9 +22,12 @@ class PublicReleaseTests(unittest.TestCase):
             self.assertTrue((snapshot / "app.py").is_file())
             self.assertTrue((snapshot / "requirements" / "00_vision.md").is_file())
             self.assertTrue((snapshot / "PUBLIC_SNAPSHOT_INFO.md").is_file())
+            self.assertTrue((snapshot / "static" / "manifest.webmanifest").is_file())
+            self.assertTrue((snapshot / "static" / "icon.svg").is_file())
             self.assertIn("generated, sanitized public mirror", (snapshot / "README.md").read_text(encoding="utf-8"))
             self.assertFalse((snapshot / "data").exists())
             self.assertEqual(find_public_safety_issues(snapshot), [])
+            self.assertEqual(validate_public_pwa_assets(snapshot), [])
             snapshot_text = "\n".join(
                 path.read_text(encoding="utf-8")
                 for path in snapshot.rglob("*")

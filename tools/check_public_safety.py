@@ -63,7 +63,10 @@ def _patterns(root: Path) -> dict[str, re.Pattern[str]]:
         "absolute Windows user path": re.compile(windows_home, re.IGNORECASE),
         "absolute macOS user path": re.compile(r"/(?:Users|home)/[^/\s]+", re.IGNORECASE),
         "email address": re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
-        "phone number": re.compile(r"(?<!\d)(?:0\d{1,4}-\d{1,4}-\d{3,4}|0\d{9,10})(?!\d)"),
+        # A SHA-256 value can contain a coincidental 10--11 digit run.  Do
+        # not classify such a run as a phone number when it is embedded in a
+        # hexadecimal token (for example a reviewed screenshot hash).
+        "phone number": re.compile(r"(?<![0-9a-fA-F])(?:0\d{1,4}-\d{1,4}-\d{3,4}|0\d{9,10})(?![0-9a-fA-F])"),
     }
     for term in terms:
         result[f"private term ({term[:24]})"] = re.compile(re.escape(term), re.IGNORECASE)

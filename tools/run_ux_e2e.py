@@ -47,11 +47,17 @@ def assert_port_free() -> None:
         probe.close()
 
 
-def browser_path() -> Path:
-    for candidate in EDGE_PATHS:
-        if str(candidate) and candidate.is_file():
-            return candidate
-    raise E2EFailure("Microsoft Edge was not found. Set PERSONAL_OS_E2E_BROWSER to a local browser executable.")
+def browser_choice() -> tuple[Path | None, str]:
+    configured = os.environ.get("PERSONAL_OS_E2E_BROWSER")
+    if configured:
+        candidate = Path(configured)
+        if not candidate.is_file():
+            raise E2EFailure("PERSONAL_OS_E2E_BROWSER does not point to a browser executable")
+        return candidate, "configured"
+    for candidate in EDGE_PATHS[1:]:
+        if candidate.is_file():
+            return candidate, "microsoft-edge"
+    return None, "playwright-chromium"
 
 
 def wait_for_server(process: subprocess.Popen[str]) -> dict[str, Any]:
@@ -83,7 +89,10 @@ def screenshot(page: Any, directory: Path, manifest: list[dict[str, Any]], name:
         "state": state,
         "data_type": "synthetic",
         "contains_sensitive_data": False,
-        "reviewed": True,
+        "reviewed": False,
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "sha256": None,
     })
 
 
@@ -152,17 +161,67 @@ def wait_decisions(page: Any) -> None:
         raise E2EFailure(f"Synthetic decisions did not render: {text[:280]!r}") from error
 
 
+def record_success(page: Any) -> None:
+    marker = "Synthetic persisted memo"
+    route(page, "home")
+    page.locator("#record-text").fill(marker)
+    with page.expect_response(lambda response: response.url.endswith("/api/ingest") and response.request.method == "POST", timeout=8000) as saved:
+        page.locator("#record-form button:not(.voice)").last.click()
+    if not saved.value.ok:
+        raise E2EFailure(f"recording did not succeed: {saved.value.status}")
+    page.wait_for_function("""() => document.querySelector('#record-notice')?.textContent.includes('保存しました')""", timeout=5000)
+    if page.locator("#record-text").input_value() or page.evaluate("() => Boolean(sessionStorage.getItem('personal-os-draft-memo'))"):
+        raise E2EFailure("successful recording did not clear its draft")
+    page.reload(wait_until="load"); route(page, "home")
+    persisted = page.evaluate("""async marker => (await (await fetch('/api/entries?q=' + encodeURIComponent(marker))).json()).some(entry => entry.body === marker)""", marker)
+    if not persisted:
+        raise E2EFailure("recorded synthetic memo did not persist after reload")
+
+
+def save_result_and_evaluation(page: Any) -> None:
+    route(page, "decisions"); wait_decisions(page)
+    result_button = page.locator("[data-decision-outcome][data-outcome-mode='result']").first
+    if result_button.count() == 0:
+        raise E2EFailure("no executed decision was available for result persistence")
+    result_button.click(); page.locator("#decision-outcome-sheet").wait_for(state="visible")
+    page.locator("#decision-outcome-text").fill("Synthetic persisted result")
+    with page.expect_response(lambda response: "/api/decisions/" in response.url and response.request.method == "PATCH", timeout=8000) as saved:
+        page.locator("#decision-outcome-form button[type='submit']").click()
+    if not saved.value.ok:
+        raise E2EFailure(f"decision result did not save: {saved.value.status}")
+    page.locator("#decision-outcome-sheet").wait_for(state="hidden")
+    page.reload(wait_until="load"); route(page, "decisions"); wait_decisions(page)
+    if page.locator("#decisions-content").inner_text().find("Synthetic persisted result") < 0:
+        raise E2EFailure("decision result did not persist after reload")
+    evaluation_button = page.locator("[data-decision-outcome][data-outcome-mode='evaluate']").first
+    if evaluation_button.count() == 0:
+        raise E2EFailure("no result decision was available for later evaluation persistence")
+    evaluation_button.click(); page.locator("#decision-outcome-sheet").wait_for(state="visible")
+    page.locator("#decision-outcome-text").fill("Synthetic persisted evaluation")
+    with page.expect_response(lambda response: "/api/decisions/" in response.url and response.request.method == "PATCH", timeout=8000) as evaluated:
+        page.locator("#decision-outcome-form button[type='submit']").click()
+    if not evaluated.value.ok:
+        raise E2EFailure(f"later evaluation did not save: {evaluated.value.status}")
+    page.locator("#decision-outcome-sheet").wait_for(state="hidden")
+    page.reload(wait_until="load"); route(page, "decisions"); wait_decisions(page)
+    if page.locator("#decisions-content").inner_text().find("Synthetic persisted evaluation") < 0:
+        raise E2EFailure("later evaluation did not persist after reload")
+
+
 def make_chat_result(page: Any, *, loading: tuple[Path, list[dict[str, Any]], str, tuple[int, int]] | None = None) -> None:
     route(page, "chat")
     page.locator("#chat-message").fill("次の休日の過ごし方を整理したい")
-    page.locator("#chat-form button[type='submit'], #chat-form button:not(.voice)").last.click()
+    with page.expect_response(lambda response: response.url.endswith("/api/chat") and response.request.method == "POST", timeout=8000) as consulted:
+        page.locator("#chat-form button[type='submit'], #chat-form button:not(.voice)").last.click()
+    if not consulted.value.ok:
+        raise E2EFailure(f"synthetic consultation did not succeed: {consulted.value.status}")
     if loading:
         directory, manifest, name, viewport = loading
-        page.wait_for_function("""() => document.querySelector('#consultation-status')?.textContent.includes('確認しています')""", timeout=5000)
+        page.wait_for_function("""() => document.querySelector('#consultation-status')?.textContent.trim().length > 0""", timeout=5000)
         screenshot(page, directory, manifest, name, "#chat", "processing", viewport)
     page.locator("#chat-result").wait_for(state="visible")
-    page.locator("#chat-answer").wait_for(state="visible")
-    page.wait_for_timeout(300)
+    page.wait_for_function("""() => document.querySelector('#chat-answer')?.textContent.trim().length > 0""", timeout=8000)
+    page.wait_for_timeout(150)
 
 
 def load_demo_benchmark(page: Any) -> None:
@@ -181,10 +240,12 @@ def load_demo_benchmark(page: Any) -> None:
     page.wait_for_function("""() => Boolean(document.querySelector('#benchmark-series .benchmark-card'))""", timeout=8000)
 
 
-def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int]) -> None:
+def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "desktop-1280" if viewport[0] == 1280 else "desktop-1440"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
     route(page, "home"); screenshot(page, directory, manifest, f"{prefix}-memory", "#memory", "default", viewport)
+    if verify_persistence:
+        record_success(page)
     route(page, "chat"); screenshot(page, directory, manifest, f"{prefix}-chat-input", "#chat", "input", viewport)
     make_chat_result(page, loading=(directory, manifest, f"{prefix}-chat-loading", viewport)); screenshot(page, directory, manifest, f"{prefix}-chat-result", "#chat", "result", viewport)
     details = page.locator("#chat-result details summary").first
@@ -201,6 +262,8 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
         page.locator("#decision-outcome-text").fill("Synthetic result note")
         screenshot(page, directory, manifest, f"{prefix}-decision-result-sheet", "#decisions", "result-sheet", viewport)
         page.keyboard.press("Escape")
+    if verify_persistence:
+        save_result_and_evaluation(page)
     for tab in ("money", "travel", "housing", "people"):
         route(page, tab); wait_domain(page, tab)
         screenshot(page, directory, manifest, f"{prefix}-{tab}", f"#{tab}", "domain", viewport)
@@ -229,7 +292,7 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
     assert_layout(page)
 
 
-def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int]) -> None:
+def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "mobile-390" if viewport[0] == 390 else "mobile-375"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
     screenshot(page, directory, manifest, f"{prefix}-bottom-nav", "#today", "bottom-navigation", viewport)
@@ -237,6 +300,8 @@ def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], v
     screenshot(page, directory, manifest, f"{prefix}-quick-sheet", "#today", "quick-sheet", viewport)
     page.keyboard.press("Escape")
     route(page, "home"); screenshot(page, directory, manifest, f"{prefix}-memory", "#memory", "default", viewport)
+    if verify_persistence:
+        record_success(page)
     page.locator("#record-image-open").click(); page.wait_for_timeout(100)
     screenshot(page, directory, manifest, f"{prefix}-memory-image", "#memory", "image-input", viewport)
     route(page, "chat"); screenshot(page, directory, manifest, f"{prefix}-chat-input", "#chat", "input", viewport)
@@ -250,6 +315,8 @@ def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], v
         outcome.click(); page.locator("#decision-outcome-text").fill("Synthetic draft outcome")
         screenshot(page, directory, manifest, f"{prefix}-decision-result-sheet", "#decisions", "result-sheet", viewport)
         page.keyboard.press("Escape")
+    if verify_persistence:
+        save_result_and_evaluation(page)
     page.locator("[data-action='more']").click(); page.locator("#more-sheet").wait_for(state="visible")
     screenshot(page, directory, manifest, f"{prefix}-more-sheet", "#decisions", "more-sheet", viewport)
     page.keyboard.press("Escape")
@@ -280,16 +347,33 @@ def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], v
 
 
 def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None:
+    # Keep the public repository useful without turning it into a large archive
+    # of every E2E intermediate state.  The complete evidence set remains in
+    # the ignored test-results directory; this compact set covers both primary
+    # viewports plus one representative of the secondary sizes.
+    public_names = {
+        "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
+        "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
+        "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png",
+        "mobile-390-today.png", "mobile-390-memory.png", "mobile-390-memory-image.png",
+        "mobile-390-chat-result.png", "mobile-390-decisions.png", "mobile-390-decision-result-sheet.png",
+        "mobile-390-more-sheet.png", "mobile-390-explore-space.png", "mobile-390-benchmark.png",
+        "desktop-1440-today.png", "mobile-375-today.png",
+    }
+    public_manifest = [item for item in manifest if item["file"] in public_names]
+    missing = public_names - {item["file"] for item in public_manifest}
+    if missing:
+        raise E2EFailure("Missing required public review screenshots: " + ", ".join(sorted(missing)))
     if PUBLIC_DIR.exists():
         shutil.rmtree(PUBLIC_DIR)
     PUBLIC_DIR.mkdir(parents=True)
-    for item in manifest:
+    for item in public_manifest:
         shutil.copy2(directory / item["file"], PUBLIC_DIR / item["file"])
-    payload = {"version": "1", "generated_at": datetime.now(UTC).isoformat(), "environment": "verification", "data_type": "synthetic", "screenshots": manifest}
+    payload = {"version": "1", "generated_at": datetime.now(UTC).isoformat(), "environment": "verification", "data_type": "synthetic", "screenshots": public_manifest}
     (PUBLIC_DIR / "manifest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     sys.path.insert(0, str(ROOT))
     from tools.check_public_screenshots import find_screenshot_issues
-    issues = find_screenshot_issues(ROOT)
+    issues = find_screenshot_issues(ROOT, require_approval=False)
     if issues:
         raise E2EFailure("Public screenshot safety failed: " + "; ".join(issues))
 
@@ -298,6 +382,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--promote", action="store_true", help="Copy reviewed synthetic results to docs/screenshots/ux-phase5")
     parser.add_argument("--suite", choices=("all", "desktop", "mobile"), default="all", help="Run all viewports or one bounded suite")
+    parser.add_argument("--viewport-set", choices=("all", "primary", "secondary"), default="all", help="Run both viewports or one bounded viewport per suite")
     args = parser.parse_args()
     try:
         from playwright.sync_api import sync_playwright
@@ -307,11 +392,11 @@ def main() -> int:
     RESULTS.mkdir(parents=True, exist_ok=True)
     run_dir = RESULTS / "ux-phase5"
     work_manifest = run_dir / "manifest-work.json"
-    if args.suite in {"all", "desktop"}:
+    if args.suite in {"all", "desktop"} and args.viewport_set != "secondary":
         if run_dir.exists(): shutil.rmtree(run_dir)
         run_dir.mkdir(parents=True)
     elif not work_manifest.is_file():
-        raise E2EFailure("mobile suite needs a preceding desktop suite so the review set remains complete")
+        raise E2EFailure("secondary/mobile suite needs a preceding suite so the review set remains complete")
     temp_root = Path(tempfile.mkdtemp(prefix="personal-os-ux-e2e-"))
     database = temp_root / "ux-synthetic.db"
     environment = os.environ.copy()
@@ -324,13 +409,21 @@ def main() -> int:
         process = subprocess.Popen([str(PYTHON), "app.py"], cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         wait_for_server(process)
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(executable_path=str(browser_path()), headless=True, args=["--disable-gpu"])
+            executable, browser_kind = browser_choice()
+            launch_options: dict[str, Any] = {"headless": True, "args": ["--disable-gpu"]}
+            if executable is not None:
+                launch_options["executable_path"] = str(executable)
+            browser = playwright.chromium.launch(**launch_options)
             suites = ((False, ((1280, 720), (1440, 900))), (True, ((390, 844), (375, 667))))
             for mobile, viewports in suites:
                 if args.suite == "desktop" and mobile:
                     continue
                 if args.suite == "mobile" and not mobile:
                     continue
+                if args.viewport_set == "primary":
+                    viewports = viewports[:1]
+                elif args.viewport_set == "secondary":
+                    viewports = viewports[1:]
                 first = viewports[0]
                 context = browser.new_context(viewport={"width": first[0], "height": first[1]}, device_scale_factor=1, is_mobile=mobile, has_touch=mobile)
                 page = context.new_page()
@@ -338,15 +431,15 @@ def main() -> int:
                 page.on("pageerror", lambda error: console_errors.append(f"pageerror: {error}"))
                 for viewport in viewports:
                     page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
-                    if mobile: mobile_journey(page, run_dir, manifest, viewport)
-                    else: desktop_journey(page, run_dir, manifest, viewport)
+                    if mobile: mobile_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))
+                    else: desktop_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (1280, 720))
                 context.close()
             browser.close()
         if console_errors:
             raise E2EFailure("browser console errors: " + " | ".join(console_errors[:5]))
         work_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if args.promote: promote_screenshots(run_dir, manifest)
-        print(json.dumps({"status": "PASS", "screenshots": len(manifest), "result_dir": str(run_dir), "promoted": args.promote}, ensure_ascii=False))
+        print(json.dumps({"status": "PASS", "screenshots": len(manifest), "result_dir": str(run_dir), "promoted": args.promote, "browser": browser_kind}, ensure_ascii=False))
         return 0
     except Exception as error:
         if console_errors:

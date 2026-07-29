@@ -11,22 +11,80 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
-def main() -> None:
+ROOT = Path(__file__).resolve().parents[1]
+ALLOWED_NAMES = {"ux-synthetic.db"}
+VERIFICATION_SUFFIX = ".verification.db"
+
+
+class SeedSafetyError(ValueError):
+    """Raised before the synthetic seed tool can touch an unsafe path."""
+
+
+def _within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def production_database_paths(root: Path = ROOT) -> set[Path]:
+    paths = {root.resolve() / "data" / "personal_os.db"}
+    configured = os.environ.get("PERSONAL_OS_PRODUCTION_DB_PATH")
+    if configured:
+        paths.add(Path(configured).resolve())
+    return {path.resolve() for path in paths}
+
+
+def validate_seed_target(
+    candidate: Path,
+    *,
+    environment: str | None = None,
+    root: Path = ROOT,
+    temporary_directory: Path | None = None,
+    protected_paths: set[Path] | None = None,
+) -> Path:
+    """Return a safe resolved E2E target without creating or deleting it."""
+    if environment != "verification":
+        raise SeedSafetyError("Refusing to seed outside PERSONAL_OS_ENV=verification.")
+    target = candidate.resolve()
+    protected = {path.resolve() for path in (protected_paths or production_database_paths(root))}
+    if target in protected:
+        raise SeedSafetyError("Refusing to modify the production database.")
+    if target.name not in ALLOWED_NAMES and not target.name.endswith(VERIFICATION_SUFFIX):
+        raise SeedSafetyError("Refusing to modify a database without an approved verification name.")
+    verification_root = (root.resolve() / "data" / "verification")
+    temp_root = (temporary_directory or Path(tempfile.gettempdir())).resolve()
+    if not (_within(target, verification_root) or _within(target, temp_root)):
+        raise SeedSafetyError("Refusing to modify a database outside the temporary or data/verification directories.")
+    # ``resolve`` above follows an existing symlink, so a link to a protected
+    # file reaches the production comparison before any filesystem mutation.
+    return target
+
+
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", required=True, type=Path)
+    parser.add_argument("--replace", action="store_true", help="Replace an existing approved verification database")
     args = parser.parse_args()
-    db_path = args.db.resolve()
+    try:
+        db_path = validate_seed_target(args.db, environment=os.environ.get("PERSONAL_OS_ENV"))
+    except SeedSafetyError as error:
+        parser.error(str(error))
     if db_path.exists():
+        if not args.replace:
+            parser.error("Refusing to replace an existing verification database without --replace.")
         db_path.unlink()
-    os.environ["PERSONAL_OS_ENV"] = "verification"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     os.environ["PERSONAL_OS_DB_PATH"] = str(db_path)
     os.environ["PERSONAL_OS_BACKUP_DIR"] = str(db_path.parent / "backups")
     os.environ["PERSONAL_OS_ATTACHMENT_DIR"] = str(db_path.parent / "attachments")
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(ROOT))
     import app  # Imported only after the isolated database environment is set.
 
     app.initialize()
@@ -138,12 +196,13 @@ def main() -> None:
             insert(connection, "decisions", {
                 "domain": domain, "title": title, "context": "Synthetic UX fixture", "options_json": json.dumps(["Option A", "Option B"]),
                 "decision": decision, "selected_option": decision, "rationale": "Synthetic rationale", "status": "decided",
-                "decision_state": "executed" if result else "decided", "result": result, "decided_on": "2026-07-29",
+                "decision_state": "result" if result else ("executed" if domain == "finance" else "decided"), "result": result, "decided_on": "2026-07-29",
                 "created_at": stamp, "updated_at": stamp,
             })
         connection.commit()
     print(f"Synthetic UX demo database created: {db_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -95,7 +95,8 @@ form[data-submitting="true"] { opacity: .88; }
 #today .analysis-detail, #today .technical-detail { font-size: .84rem; }
 
 @media (min-width: 1024px) {
-  #today { display: block; }
+  /* Do not override the router's .hidden state on non-Today routes. */
+  #today:not(.hidden) { display: block; }
   #today-overview + .card { margin-top: 0; }
   #chat .card { max-width: none; }
 }

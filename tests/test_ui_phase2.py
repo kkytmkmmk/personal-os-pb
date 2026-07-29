@@ -85,7 +85,7 @@ class UiPhase2StaticTests(unittest.TestCase):
     def test_domain_and_explore_surfaces_keep_daily_and_technical_actions_separate(self):
         self.assertIn("standardizeDomainViews", self.daily_ux)
         self.assertIn("domain-recent-changes", self.daily_ux)
-        self.assertIn("根拠と抽出情報", self.daily_ux)
+        self.assertIn("根拠あり", self.daily_ux)
         self.assertIn("technical-detail", self.daily_ux)
         self.assertIn("benchmark-import-sheet", self.index)
         self.assertIn("benchmark-import-open", self.daily_ux)

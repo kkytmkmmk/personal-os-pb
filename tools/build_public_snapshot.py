@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEXT_SUFFIXES = {".py", ".js", ".html", ".css", ".md", ".json", ".toml", ".yaml", ".yml", ".ps1", ".txt"}
+TEXT_SUFFIXES = {".py", ".js", ".html", ".css", ".md", ".json", ".toml", ".yaml", ".yml", ".ps1", ".txt", ".svg", ".webmanifest"}
 ALLOWED_ROOTS = {"app.py", "personal_os", "static", "tools", "tests", "benchmarks", "requirements", "docs", "README.md", "ARCHITECTURE.md", "USER_GUIDE.md", "CONTRIBUTING.md", ".gitignore", ".env.example", "requirements-dev.txt"}
 ALLOWED_BINARY_PREFIXES = ("docs/screenshots/ux-phase5/",)
 PUBLIC_REVIEW_TEXT_PATHS = (Path("docs/ux_phase5_visual_review.md"),)
@@ -67,6 +68,52 @@ def public_readme(text: str) -> str:
         "context are intentionally included. Direct changes may be overwritten.\n\n"
     )
     return banner + text
+
+
+def _snapshot_asset(snapshot: Path, url: str) -> Path:
+    normalized = url.split("?", 1)[0].split("#", 1)[0]
+    if normalized == "/":
+        return snapshot / "static" / "index.html"
+    return snapshot / "static" / normalized.lstrip("/")
+
+
+def validate_public_pwa_assets(snapshot: Path) -> list[str]:
+    """Ensure the service worker cannot cache references absent from a clone."""
+    static = snapshot / "static"
+    index = static / "index.html"
+    worker = static / "service-worker.js"
+    issues: list[str] = []
+    if not index.is_file() or not worker.is_file():
+        return ["public snapshot is missing index.html or service-worker.js"]
+    html = index.read_text(encoding="utf-8")
+    for attribute in ("manifest", "icon"):
+        for value in re.findall(rf"<(?:link|meta)[^>]+(?:rel=[\"'][^\"']*{attribute}[^\"']*[\"'])[^>]+href=[\"']([^\"']+)", html, flags=re.I):
+            if not _snapshot_asset(snapshot, value).is_file():
+                issues.append(f"HTML {attribute} asset missing: {value}")
+    for value in re.findall(r"<link[^>]+href=[\"']([^\"']+)", html, flags=re.I):
+        if value.endswith((".webmanifest", ".svg")) and not _snapshot_asset(snapshot, value).is_file():
+            issues.append(f"HTML linked asset missing: {value}")
+    manifest_path = static / "manifest.webmanifest"
+    if not manifest_path.is_file():
+        issues.append("manifest.webmanifest is missing")
+    else:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            issues.append(f"manifest.webmanifest is invalid JSON: {error}")
+        else:
+            for icon in manifest.get("icons", []):
+                if not isinstance(icon, dict) or not _snapshot_asset(snapshot, str(icon.get("src", ""))).is_file():
+                    issues.append(f"manifest icon missing: {icon.get('src') if isinstance(icon, dict) else icon}")
+    worker_text = worker.read_text(encoding="utf-8")
+    match = re.search(r"const\s+APP_SHELL\s*=\s*\[(.*?)\]", worker_text, flags=re.S)
+    if not match:
+        issues.append("service worker APP_SHELL is missing")
+    else:
+        for asset in re.findall(r"[\"']([^\"']+)[\"']", match.group(1)):
+            if not _snapshot_asset(snapshot, asset).is_file():
+                issues.append(f"service worker asset missing: {asset}")
+    return issues
 
 
 def build_snapshot(output: Path) -> int:
@@ -143,6 +190,9 @@ def build_snapshot(output: Path) -> int:
         newline="\n",
     )
     copied += 1
+    pwa_issues = validate_public_pwa_assets(output)
+    if pwa_issues:
+        raise ValueError("Public PWA asset validation failed: " + "; ".join(pwa_issues))
     return copied
 
 

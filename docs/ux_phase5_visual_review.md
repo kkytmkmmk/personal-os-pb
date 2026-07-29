@@ -33,7 +33,7 @@
 - SheetのEsc、Backdrop、Focus Trap、Focus復帰、背景スクロール固定を共通化した。
 - Domain画面のCurrent/Recent/Decisions/History/Evidence構造とEmpty Stateを共通Rendererへ統一した。
 
-全70画面は `screenshots/ux-phase5/manifest.json` に登録され、すべてSynthetic Data、`reviewed=true`、`contains_sensitive_data=false` として公開前検査する。
+公開レビュー用の20画面は `screenshots/ux-phase5/manifest.json` に登録する。E2E生成直後はすべて `reviewed=false` とし、Synthetic Dataであることと `contains_sensitive_data=false` を確認した目視承認後だけ、ハッシュ・承認者・承認日時付きで公開前検査を通過する。
 
 ## 残課題
 
