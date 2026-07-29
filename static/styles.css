@@ -63,9 +63,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .timeline-row span { color: var(--muted); font-size: .88rem; }
 .empty-state { padding: 12px 0; color: var(--muted); }
 .consultation-examples { margin: 8px 0 0; }
+.consultation-missing { margin: 14px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #101716; }
+.consultation-missing h3 { margin: 0 0 8px; font-size: 1rem; }
+.consultation-missing ul { margin: 0; padding-left: 1.2rem; }
+.consultation-missing li { margin: 7px 0; }
+.consultation-missing li span { display: block; color: var(--muted); font-size: .86rem; }
 .chat-context { margin-top: 16px; }
 .chat-context summary { cursor: pointer; color: var(--muted); }
 .chat-context #chat-memories { margin-top: 12px; }
+.decision-filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.decision-filters label { display: grid; gap: 4px; min-width: min(100%, 180px); color: var(--muted); font-size: .86rem; }
 #record-image-details > .card { margin: 12px 0 0; }
 #record-image-details summary { cursor: pointer; color: var(--muted); padding: 10px 0; }
 form[data-submitting="true"] { opacity: .88; }
@@ -120,6 +127,8 @@ form[data-submitting="true"] { opacity: .88; }
   .sheet-grid { grid-template-columns: 1fr 1fr; }
   .daily-actions-card .actions { display: grid; grid-template-columns: 1fr 1fr; }
   .daily-actions-card .actions button { min-width: 0; }
+  .decision-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .decision-filters label { min-width: 0; }
   /* Keep source/technical metadata behind an explicit details toggle. */
   .domain-fact .source.technical { display: none; }
 }

@@ -37,7 +37,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-daily-ux-1", self.sw)
+        self.assertIn("personal-os-v3-daily-ux-2", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
@@ -64,6 +64,44 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("streamlineConsultation", self.daily_ux)
         self.assertIn("streamlineDecisions", self.daily_ux)
         self.assertIn("sessionStorage", self.daily_ux)
+
+    def test_consultation_exposes_progress_missing_context_and_collapsed_evidence(self):
+        self.assertIn('id="consultation-status"', self.daily_ux)
+        self.assertIn("記憶と過去の判断を確認しています", self.daily_ux)
+        self.assertIn("関連する情報を選んでいます", self.daily_ux)
+        self.assertIn("consultation-missing", self.daily_ux)
+        self.assertIn("missing_context", self.daily_ux)
+        self.assertIn("参照した根拠を見る", self.daily_ux)
+
+    def test_decision_screen_prioritizes_next_action_and_uses_sheet_for_outcomes(self):
+        self.assertIn("controls.id = 'decision-filters'", self.daily_ux)
+        self.assertIn("decision-state-filter", self.daily_ux)
+        self.assertIn("data-decision-action=\"execute\"", self.daily_ux)
+        self.assertIn("data-decision-outcome", self.daily_ux)
+        self.assertIn("personalOsOpenDecisionOutcome", self.index)
+        self.assertNotIn("window.recordDecisionResult=async id=>{const result=prompt", self.index)
+        self.assertNotIn("window.evaluateDecision=async id=>{const text=prompt", self.index)
+
+    def test_domain_and_explore_surfaces_keep_daily_and_technical_actions_separate(self):
+        self.assertIn("standardizeDomainViews", self.daily_ux)
+        self.assertIn("domain-recent-changes", self.daily_ux)
+        self.assertIn("根拠と抽出情報", self.daily_ux)
+        self.assertIn("technical-detail", self.daily_ux)
+        self.assertIn("benchmark-import-sheet", self.index)
+        self.assertIn("benchmark-import-open", self.daily_ux)
+
+    def test_empty_personal_space_can_return_to_recording(self):
+        visualization = (ROOT / "static" / "visualization.js").read_text(encoding="utf-8")
+        self.assertIn("data-space-record", visualization)
+        self.assertIn("personalOsNavigate?.('home')", visualization)
+
+    def test_mobile_sheets_preserve_focus_and_pwa_shell_is_refreshed(self):
+        self.assertIn("const sheetOpeners = new Map()", self.daily_ux)
+        self.assertIn("sheetOpeners.get(sheet.id)", self.daily_ux)
+        self.assertIn("personal-os-v3-daily-ux-2", self.sw)
+
+    def test_today_candidate_refresh_owns_its_card_reference(self):
+        self.assertIn("let card = document.querySelector('#today-next-candidates');", self.index)
 
 
 if __name__ == "__main__":

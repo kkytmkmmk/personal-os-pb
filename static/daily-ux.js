@@ -8,11 +8,12 @@
   const announce = message => { const live = $('#ui-live'); if (live) live.textContent = message; };
   const visible = element => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
   const navigate = tab => window.personalOsNavigate?.(tab);
+  const sheetOpeners = new Map();
 
   function openSheet(id, opener) {
     const sheet = $(`#${id}`);
     if (!sheet) return;
-    sheet.dataset.returnFocus = opener?.id || '';
+    if (opener) sheetOpeners.set(id, opener);
     sheet.hidden = false;
     sheet.classList.remove('hidden');
     $('.ui-sheet-panel button, .ui-sheet-panel input, .ui-sheet-panel textarea', sheet)?.focus();
@@ -22,7 +23,7 @@
     if (!sheet) return;
     sheet.hidden = true;
     sheet.classList.add('hidden');
-    const opener = sheet.dataset.returnFocus && $(`#${sheet.dataset.returnFocus}`);
+    const opener = sheetOpeners.get(sheet.id);
     opener?.focus();
   }
 
@@ -144,10 +145,14 @@
   function streamlineConsultation() {
     const page = $('#chat'), result = $('#chat-result');
     if (!page || !result) return;
+    const form = $('#chat-form');
+    if (!form || form.dataset.consultationReady) return;
+    form.dataset.consultationReady = 'true';
     const examples = document.createElement('div');
     examples.className = 'consultation-examples';
-    examples.innerHTML = '<p class="help">例: 「次の旅行を決めたい」「この判断を整理したい」</p>';
-    $('#chat-form')?.after(examples);
+    examples.innerHTML = '<p class="help">例: 「次の旅行を決めたい」「この判断を整理したい」</p><p id="consultation-status" class="help" role="status" aria-live="polite"></p>';
+    form.after(examples);
+    const status = $('#consultation-status');
     const collapseEvidence = () => {
       const memories = $('#chat-memories');
       if (!memories || memories.closest('details')) return;
@@ -156,6 +161,33 @@
       memories.before(details); details.append(memories);
       result.querySelector('h3')?.remove();
     };
+    const renderResponseContext = data => {
+      window.setTimeout(() => {
+        collapseEvidence();
+        result.querySelector('#consultation-missing')?.remove();
+        const missing = Array.isArray(data?.missing_context) ? data.missing_context.slice(0, 3) : [];
+        if (missing.length) {
+          const section = document.createElement('section');
+          section.id = 'consultation-missing'; section.className = 'consultation-missing';
+          section.innerHTML = `<h3>確認できると、より良く答えられること</h3><ul>${missing.map(item => `<li><b>${escapeHtml(item.label || '追加情報')}</b>${item.reason ? `<span>${escapeHtml(item.reason)}</span>` : ''}</li>`).join('')}</ul>`;
+          const context = result.querySelector('.chat-context');
+          (context || result.lastElementChild)?.before(section);
+        }
+        const responseType = { answer_only: '回答', recommendation: '提案', planning: '計画', decision_review: '判断の整理' }[data?.response_type] || '回答';
+        if (status) status.textContent = `${responseType}を表示しました。根拠は必要なときだけ開けます。`;
+        announce(`${responseType}を表示しました`);
+      }, 0);
+    };
+    form.addEventListener('submit', () => {
+      result.querySelector('#chat-recommendation-candidate')?.remove();
+      result.querySelector('#consultation-missing')?.remove();
+      if (status) status.textContent = '記憶と過去の判断を確認しています…';
+      window.setTimeout(() => { if (form.dataset.actionState === 'submitting' && status) status.textContent = '関連する情報を選んでいます…'; }, 300);
+    }, true);
+    window.addEventListener('personal-os-chat-response', event => renderResponseContext(event.detail || {}));
+    window.addEventListener('personal-os-api-error', event => {
+      if (event.detail?.path === '/api/chat' && status) status.textContent = '相談を完了できませんでした。入力内容はそのままです。';
+    });
     new MutationObserver(collapseEvidence).observe(result, { childList: true, subtree: true });
     collapseEvidence();
     addDraft($('#chat-message'), 'chat');
@@ -179,7 +211,13 @@
     const board = $('#cycle-board');
     if (board && board.parentElement !== page) page.append(board);
     const existing = $('#decisions-content');
-    if (existing) existing.before(Object.assign(document.createElement('h2'), { textContent: '対応が必要' }));
+    if (existing && !$('#decision-filters')) {
+      const controls = document.createElement('div');
+      controls.id = 'decision-filters'; controls.className = 'decision-filters';
+      controls.innerHTML = '<label>領域<select id="decision-domain-filter"><option value="">すべて</option><option value="money">資産</option><option value="travel">旅行</option><option value="housing">住居</option><option value="people">人間関係</option><option value="other">その他</option></select></label><label>状態<select id="decision-state-filter"><option value="">すべて</option><option value="actionable">対応が必要</option><option value="candidate">候補</option><option value="decided">決定済み</option><option value="executed">実行済み</option><option value="result">結果待ち・振り返り</option></select></label>';
+      existing.before(controls);
+      $$('#decision-filters select').forEach(select => select.addEventListener('change', () => window.refreshDecisions?.()));
+    }
     const openOutcome = (id, mode) => {
       const sheet = outcomeSheet(), form = $('#decision-outcome-form', sheet), title = $('#decision-outcome-title', sheet);
       title.textContent = mode === 'evaluate' ? '後日評価を記録する' : '結果を記録する';
@@ -187,7 +225,7 @@
       const draftKey = `personal-os-draft-decision-${id}-${mode}`;
       const saved = sessionStorage.getItem(draftKey);
       if (saved) { try { const data = JSON.parse(saved); $('#decision-outcome-text', sheet).value = data.text || ''; $('#decision-outcome-good', sheet).value = data.good || ''; $('#decision-outcome-next', sheet).value = data.next || ''; $('#decision-outcome-score', sheet).value = data.score || ''; } catch { /* ignore corrupt local draft */ } }
-      form.dataset.draftKey = draftKey; openSheet(sheet.id);
+      form.dataset.draftKey = draftKey; openSheet(sheet.id, document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
     };
     window.recordDecisionResult = id => openOutcome(id, 'result');
     window.evaluateDecision = id => openOutcome(id, 'evaluate');
@@ -207,17 +245,51 @@
       notice.textContent = '保存しました。'; sessionStorage.removeItem(form.dataset.draftKey || ''); form.reset(); closeSheet(sheet);
       window.refreshDecisions?.(); window.refreshToday?.(); announce('判断の結果を保存しました');
     });
+    const decisionState = item => {
+      if (item.later_evaluation) return '振り返り済み';
+      return ({ candidate: '候補', considered: '検討中', decided: '決定済み', executed: '結果待ち', result: '後日評価待ち' }[item.decision_state] || (item.result ? '後日評価待ち' : '決定済み'));
+    };
+    const actionFor = item => {
+      const id = Number(item.id);
+      if (item.later_evaluation) return '<span class="pill">振り返り済み</span>';
+      if (item.decision_state === 'candidate' || item.decision_state === 'considered') {
+        let options = []; try { options = JSON.parse(item.options_json || '[]'); } catch { /* no options */ }
+        const select = options.length ? `<select data-decision-option="${id}">${options.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select>` : '';
+        return `${select}<button type="button" data-decision-action="confirm" data-decision-id="${id}">この判断で決定する</button>`;
+      }
+      if (item.decision_state === 'decided') return `<button type="button" data-decision-action="execute" data-decision-id="${id}">実行した</button>`;
+      if (item.decision_state === 'executed') return `<button type="button" data-decision-outcome="${id}" data-outcome-mode="result">結果を記録する</button>`;
+      if (item.decision_state === 'result' || item.result) return `<button type="button" data-decision-outcome="${id}" data-outcome-mode="evaluate">後日評価を記録する</button>`;
+      return `<button type="button" data-decision-outcome="${id}" data-outcome-mode="result">結果を記録する</button>`;
+    };
     window.refreshDecisions = async () => {
       const target = $('#decisions-content');
       if (!target) return;
       try {
-        const items = await fetch('/api/decisions').then(response => response.json());
+        const allItems = await fetch('/api/decisions').then(response => response.json());
+        const domain = $('#decision-domain-filter')?.value || '', state = $('#decision-state-filter')?.value || '';
+        const domainAliases = { money: ['money', 'finance'], people: ['people', 'relationship'] };
+        const items = allItems.filter(item => (!domain || (domainAliases[domain] || [domain]).includes(item.domain)) && (!state || (state === 'actionable' ? ['candidate', 'considered', 'decided', 'executed', 'result'].includes(item.decision_state) && !item.later_evaluation : item.decision_state === state || (state === 'result' && Boolean(item.result)))));
+        const priority = { candidate: 0, considered: 0, decided: 1, executed: 2, result: 3 };
+        items.sort((left, right) => (priority[left.decision_state] ?? 4) - (priority[right.decision_state] ?? 4));
         target.innerHTML = items.length ? items.map(item => {
-          const action = !item.result ? `<button type="button" data-decision-outcome="${Number(item.id)}" data-outcome-mode="result">結果を記録する</button>` : !item.later_evaluation ? `<button type="button" data-decision-outcome="${Number(item.id)}" data-outcome-mode="evaluate">後日評価を記録する</button>` : '<span class="pill">振り返り済み</span>';
-          const state = item.result ? (item.later_evaluation ? '振り返り済み' : '後日評価待ち') : '結果待ち';
-          return `<article class="cycle-card"><div class="entry-head"><div><h3>${escapeHtml(item.title || '判断')}</h3><p class="meta">${escapeHtml(state)} · ${escapeHtml(item.updated_at || item.decided_on || item.created_at || '')}</p></div></div><p>${escapeHtml(item.rationale || item.decision || '')}</p>${item.result ? `<p class="source">結果: ${escapeHtml(item.result)}</p>` : ''}${item.later_evaluation ? `<p class="source">後日評価: ${escapeHtml(item.later_evaluation)}</p>` : ''}<div class="cycle-actions">${action}</div></article>`;
-        }).join('') : '<div class="empty-state"><p>まだ判断はありません。相談から提案を残すと、結果まで追跡できます。</p><button type="button" class="secondary" data-decision-empty-chat>相談する</button></div>';
+          const rationale = item.rationale || item.decision || '理由は未記録です。';
+          return `<article class="cycle-card"><div class="entry-head"><div><h3>${escapeHtml(item.title || '判断')}</h3><p class="meta">${escapeHtml(decisionState(item))} · 更新 ${escapeHtml(item.updated_at || item.decided_on || item.created_at || '')}</p></div><span class="pill">${escapeHtml(item.domain || 'other')}</span></div><p>${escapeHtml(rationale)}</p>${item.result ? `<p class="source">結果: ${escapeHtml(item.result)}</p>` : ''}${item.later_evaluation ? `<p class="source">後日評価: ${escapeHtml(item.later_evaluation)}</p>` : ''}<div class="cycle-actions">${actionFor(item)}</div></article>`;
+        }).join('') : '<div class="empty-state"><p>条件に合う判断はありません。相談から提案を残すと、結果まで追跡できます。</p><button type="button" class="secondary" data-decision-empty-chat>相談する</button></div>';
         $$('[data-decision-outcome]', target).forEach(button => button.addEventListener('click', () => openOutcome(button.dataset.decisionOutcome, button.dataset.outcomeMode)));
+        $$('[data-decision-action="confirm"]', target).forEach(button => button.addEventListener('click', async () => {
+          const id = Number(button.dataset.decisionId), selected = $(`[data-decision-option="${id}"]`, target)?.value || '';
+          button.disabled = true;
+          const response = await fetch(`/api/decisions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected_option: selected, decision_state: 'decided' }) });
+          if (!response.ok) announce('判断を決定できませんでした。');
+          await window.refreshDecisions(); window.refreshToday?.();
+        }));
+        $$('[data-decision-action="execute"]', target).forEach(button => button.addEventListener('click', async () => {
+          button.disabled = true;
+          const response = await fetch(`/api/decisions/${Number(button.dataset.decisionId)}/execute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: 'ユーザーが実行した' }) });
+          if (!response.ok) announce('実行済みに更新できませんでした。');
+          await window.refreshDecisions(); window.refreshToday?.();
+        }));
         $('[data-decision-empty-chat]', target)?.addEventListener('click', () => navigate('chat'));
       } catch { target.innerHTML = '<p class="help">判断を読み込めませんでした。再試行してください。</p>'; }
     };
@@ -234,6 +306,37 @@
     $('#benchmark-import-sheet-content')?.append(importCard);
     open.addEventListener('click', () => openSheet('benchmark-import-sheet', open));
     addDraft($('#benchmark-import-json'), 'benchmark-import');
+  }
+
+  function standardizeDomainViews() {
+    const legacyRefresh = window.refreshDomain;
+    if (typeof legacyRefresh !== 'function' || legacyRefresh.dailyUxWrapped) return;
+    const categoryAliases = { money: ['finance'], people: ['relationship'], travel: ['travel'], housing: ['housing'] };
+    const wrapped = async domain => {
+      await legacyRefresh(domain);
+      const root = $(`#${domain}-content`);
+      if (!root) return;
+      root.querySelectorAll('.domain-recent-changes').forEach(node => node.remove());
+      root.querySelectorAll('.domain-fact > .source').forEach(source => {
+        if (!source.textContent.trim().startsWith('根拠:') || source.parentElement?.querySelector(':scope > details.technical-detail')) return;
+        const evidence = source.nextElementSibling?.matches('details') ? source.nextElementSibling : null;
+        const details = document.createElement('details'); details.className = 'technical-detail';
+        details.innerHTML = '<summary>根拠と抽出情報</summary>';
+        source.before(details); details.append(source);
+        if (evidence) details.append(evidence);
+      });
+      try {
+        const aliases = categoryAliases[domain] || [domain];
+        const changes = await fetch('/api/memory-changes').then(response => response.ok ? response.json() : []);
+        const relevant = (changes || []).filter(change => aliases.includes(change.category)).slice(0, 3);
+        if (!relevant.length) return;
+        const section = document.createElement('section'); section.className = 'domain-recent-changes summary-card';
+        section.innerHTML = `<h3>最近の変化</h3>${relevant.map(change => `<div class="summary-line"><span>${escapeHtml(change.fact_summary || '記憶の更新')}</span><b>${escapeHtml(change.change_type || '更新')}</b></div>`).join('')}`;
+        (root.querySelector('.domain-grid') || root.querySelector('h3'))?.before(section);
+      } catch { /* Changes are supplementary. Domain facts remain available. */ }
+    };
+    wrapped.dailyUxWrapped = true;
+    window.refreshDomain = wrapped;
   }
 
   function simplifyDomainCopy() {
@@ -254,6 +357,7 @@
     streamlineConsultation();
     streamlineDecisions();
     streamlineExplore();
+    standardizeDomainViews();
     simplifyDomainCopy();
     wireMutationState();
     document.addEventListener('click', event => {

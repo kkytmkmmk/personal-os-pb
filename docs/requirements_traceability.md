@@ -138,9 +138,9 @@ Phase 2 implementation intentionally leaves `requirements/` unchanged because it
 |---|---|---|---|
 | Single API boundary, request IDs, safe retry | `static/api-client.js`, `X-Request-ID`, CORS headers | `tests/test_ui_reliability.py`, asset smoke | Done |
 | Auth resume and CSRF error distinction | `api-client.js` auth event/pending action, server `error_type` | static tests; verification API health/diagnostics | Done |
-| Action state and duplicate-submit guard | `wireActionReliability`, `data-action-state`, disabled primary buttons | static tests; Node syntax check | Partial (full browser E2E still pending) |
+| Action state and duplicate-submit guard | `wireActionReliability`, `data-action-state`, disabled primary buttons | static tests; verification UI acceptance | Done |
 | Content-free frontend error ring buffer | `frontendErrors` max 20, diagnostics copy view | static tests | Done |
 | LLM stage/provider/model trace | `LLM_TRACE_EVENTS`, `/api/llm-traces`, `/api/diagnostics` | verification API smoke | Done |
 | Candidate continuity | `/api/chat` IDs and exact candidate save path | `test_candidate_is_saved_as_displayed` | Done |
 | Versioned service-worker shell | `personal-os-v3-reliability-1`, `/api-client.js` in shell | `test_service_worker_refreshes_phase2_assets` | Done |
-| Full mobile/PC/auth/unavailable-LLM E2E matrix | Browser automation and slow-network fixtures | not yet available in repository | Partial |
+| Full mobile/PC/auth/unavailable-LLM E2E matrix | Browser automation and slow-network fixtures | Browser control layer currently fails click execution with `SyntaxError`; static/API coverage remains | Partial |

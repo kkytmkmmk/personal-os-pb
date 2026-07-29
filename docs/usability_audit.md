@@ -40,6 +40,8 @@
 
 ## Verification結果（2026-07-29）
 
+フェーズ2〜5の実装・回帰保護の対応表は [UXフェーズ2〜5トレーサビリティ](ux_phase_2_to_5_traceability.md) を参照する。Browserの画面読取はVerification環境で確認した。一方、この実行環境ではBrowser制御層がクリック実行時に `SyntaxError` を返すため、Browser操作自動化の再実行はPartialとして記録する。
+
 - Desktop 1280 × 720: 今日の「相談する」「記録する」、領域Menu、探索内のBenchmark取込Sheetを確認した。
 - Mobile 390 × 844: Bottom Navigationの全Touch Targetが44px以上で、横Overflowがないことを確認した。`＋ → 記録 → 相談 → その他 → 記憶` の遷移後も記録Draftが残った。
 - 判断: 「結果を記録する」からSheetを開き、閉じて再度開いても結果・良かった点のDraftが残ることを確認した。
