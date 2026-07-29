@@ -6,7 +6,14 @@
 (function () {
   'use strict';
   const nativeFetch = window.fetch.bind(window);
-  const DEFAULT_TIMEOUT = 30000;
+  // Short request timeouts are an E2E-only fault-injection hook.  The flag is
+  // injected before this asset loads by the verification runner and is never
+  // set by production pages.
+  const verificationTimeout = Number(window.__PERSONAL_OS_E2E_REQUEST_TIMEOUT_MS);
+  const DEFAULT_TIMEOUT = window.__PERSONAL_OS_E2E_VERIFICATION__ === true
+    && Number.isFinite(verificationTimeout) && verificationTimeout >= 100
+    ? Math.min(5000, verificationTimeout)
+    : 30000;
   const RETRIES = 2;
   let csrfToken = '';
   let authWaiter = null;

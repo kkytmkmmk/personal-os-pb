@@ -8,6 +8,7 @@ It never opens or copies ``data/personal_os.db``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -39,12 +40,20 @@ class E2EFailure(RuntimeError):
 
 
 def assert_port_free() -> None:
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        if probe.connect_ex(("127.0.0.1", 8877)) == 0:
+    # A just-stopped child server can take a short moment to release the
+    # listening socket on Windows.  Wait only for that hand-off; a real
+    # verification server remains a deterministic failure.
+    deadline = time.monotonic() + 5
+    while True:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if probe.connect_ex(("127.0.0.1", 8877)) != 0:
+                return
+        finally:
+            probe.close()
+        if time.monotonic() >= deadline:
             raise E2EFailure("port 8877 is already in use; stop the verification server before running UX E2E")
-    finally:
-        probe.close()
+        time.sleep(0.1)
 
 
 def browser_choice() -> tuple[Path | None, str]:
@@ -54,6 +63,8 @@ def browser_choice() -> tuple[Path | None, str]:
         if not candidate.is_file():
             raise E2EFailure("PERSONAL_OS_E2E_BROWSER does not point to a browser executable")
         return candidate, "configured"
+    if os.environ.get("PERSONAL_OS_E2E_FORCE_PLAYWRIGHT_CHROMIUM") == "1":
+        return None, "playwright-chromium"
     for candidate in EDGE_PATHS[1:]:
         if candidate.is_file():
             return candidate, "microsoft-edge"
@@ -94,6 +105,16 @@ def screenshot(page: Any, directory: Path, manifest: list[dict[str, Any]], name:
         "reviewed_by": None,
         "sha256": None,
     })
+
+
+def assert_distinct_screenshots(directory: Path, first_name: str, second_name: str) -> None:
+    """Ensure an asserted transient state was not captured after it resolved."""
+    first = directory / f"{first_name}.png"
+    second = directory / f"{second_name}.png"
+    if not first.is_file() or not second.is_file():
+        raise E2EFailure("consultation state screenshots were not created")
+    if hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest():
+        raise E2EFailure("consultation loading and result screenshots are identical")
 
 
 def assert_layout(page: Any, *, mobile: bool = False) -> None:
@@ -178,6 +199,58 @@ def record_success(page: Any) -> None:
         raise E2EFailure("recorded synthetic memo did not persist after reload")
 
 
+def record_timeout(browser: Any, console_errors: list[str]) -> None:
+    """Exercise capture timeout handling without sending a request to SQLite."""
+    context = browser.new_context(viewport={"width": 1280, "height": 720})
+    context.add_init_script("""
+      window.__PERSONAL_OS_E2E_VERIFICATION__ = true;
+      window.__PERSONAL_OS_E2E_REQUEST_TIMEOUT_MS = 350;
+    """)
+    page = context.new_page()
+    page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
+    page.on("pageerror", lambda error: console_errors.append(f"pageerror: {error}"))
+    marker = "Synthetic timeout memo"
+
+    # Use the same AbortError contract as api-client.js, but keep it inside a
+    # verification-only browser page.  A synchronous route handler cannot
+    # sleep without blocking Playwright's transport on Chromium.
+    page.add_init_script("""
+      (() => {
+        addEventListener('DOMContentLoaded', () => {
+          const original = window.apiClient.request.bind(window.apiClient);
+          window.apiClient.request = (path, options = {}) => {
+            if (String(path) !== '/api/ingest') return original(path, options);
+            return new Promise((resolve, reject) => setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('personal-os-api-error', {
+                detail: { path: '/api/ingest', method: 'POST', error_type: 'timeout', message: 'Synthetic request timeout' }
+              }));
+              reject(new DOMException('Synthetic request timeout', 'AbortError'));
+            }, 450));
+          };
+        }, { once: true });
+      })();
+    """)
+    try:
+        route(page, "home")
+        page.locator("#record-text").fill(marker)
+        page.locator("#record-form button:not(.voice)").last.click()
+        page.wait_for_function("""() => document.querySelector('#record-form')?.dataset.mutationState === 'error'""", timeout=5000)
+        notice = page.locator("#record-notice").inner_text()
+        if "保存しました" in notice:
+            raise E2EFailure("timeout capture displayed a success notice")
+        if page.locator("#record-text").input_value() != marker:
+            raise E2EFailure("timeout capture did not retain the visible draft")
+        if not page.evaluate("() => Boolean(sessionStorage.getItem('personal-os-draft-memo'))"):
+            raise E2EFailure("timeout capture did not retain the session draft")
+        if page.locator("#record-form button:not(.voice)").last.is_disabled():
+            raise E2EFailure("timeout capture left the submit button disabled")
+        persisted = page.evaluate("""async marker => (await (await fetch('/api/entries?q=' + encodeURIComponent(marker))).json()).some(entry => entry.body === marker)""", marker)
+        if persisted:
+            raise E2EFailure("timeout capture unexpectedly wrote to the synthetic database")
+    finally:
+        context.close()
+
+
 def save_result_and_evaluation(page: Any) -> None:
     route(page, "decisions"); wait_decisions(page)
     result_button = page.locator("[data-decision-outcome][data-outcome-mode='result']").first
@@ -210,15 +283,36 @@ def save_result_and_evaluation(page: Any) -> None:
 
 def make_chat_result(page: Any, *, loading: tuple[Path, list[dict[str, Any]], str, tuple[int, int]] | None = None) -> None:
     route(page, "chat")
+    # The chat panel can retain text from a prior client-side render. Clear it
+    # and observe the real API event so the assertion is about this request.
+    page.evaluate("""() => {
+      window.__personalOsE2eChatResolved = false;
+      document.querySelector('#chat-answer').textContent = '';
+      window.addEventListener('personal-os-chat-response', () => {
+        window.__personalOsE2eChatResolved = true;
+      }, { once: true });
+    }""")
     page.locator("#chat-message").fill("次の休日の過ごし方を整理したい")
-    with page.expect_response(lambda response: response.url.endswith("/api/chat") and response.request.method == "POST", timeout=8000) as consulted:
+    responses: list[Any] = []
+    page.on("response", lambda response: responses.append(response) if response.url.endswith("/api/chat") and response.request.method == "POST" else None)
+    with page.expect_request(lambda request: request.url.endswith("/api/chat") and request.method == "POST", timeout=8000):
         page.locator("#chat-form button[type='submit'], #chat-form button:not(.voice)").last.click()
-    if not consulted.value.ok:
-        raise E2EFailure(f"synthetic consultation did not succeed: {consulted.value.status}")
     if loading:
         directory, manifest, name, viewport = loading
         page.wait_for_function("""() => document.querySelector('#consultation-status')?.textContent.trim().length > 0""", timeout=5000)
+        if page.evaluate("() => window.__personalOsE2eChatResolved === true"):
+            raise E2EFailure("consultation loading state already contains an answer")
+        if not page.locator("#chat-form button[type='submit'], #chat-form button:not(.voice)").last.is_disabled():
+            raise E2EFailure("consultation submit button is not disabled while loading")
         screenshot(page, directory, manifest, name, "#chat", "processing", viewport)
+    deadline = time.monotonic() + 8
+    while not responses and time.monotonic() < deadline:
+        page.wait_for_timeout(25)
+    if not responses:
+        raise E2EFailure("synthetic consultation did not return a response")
+    consulted = responses[-1]
+    if not consulted.ok:
+        raise E2EFailure(f"synthetic consultation did not succeed: {consulted.status}")
     page.locator("#chat-result").wait_for(state="visible")
     page.wait_for_function("""() => document.querySelector('#chat-answer')?.textContent.trim().length > 0""", timeout=8000)
     page.wait_for_timeout(150)
@@ -226,10 +320,9 @@ def make_chat_result(page: Any, *, loading: tuple[Path, list[dict[str, Any]], st
 
 def load_demo_benchmark(page: Any) -> None:
     """Wait for both the real local POST and its subsequent rendered result."""
-    # A previous Desktop journey may already have inserted the synthetic bundle
-    # into this same temporary DB.  First let the real GET render that state;
-    # do not submit a duplicate just to obtain a screenshot.
-    page.wait_for_function("""() => document.querySelector('#benchmark-series')?.textContent.trim().length > 0""", timeout=8000)
+    # A suite owns a fresh database, but the secondary viewport in that suite
+    # may already have inserted the synthetic bundle.  Do not submit a
+    # duplicate when the real GET has already rendered it.
     if page.locator("#benchmark-series .benchmark-card").count() > 0:
         return
     with page.expect_response(lambda response: response.url.endswith("/api/benchmarks/demo") and response.request.method == "POST", timeout=8000) as posted:
@@ -237,7 +330,15 @@ def load_demo_benchmark(page: Any) -> None:
     response = posted.value
     if not response.ok:
         raise E2EFailure(f"synthetic benchmark demo endpoint failed: {response.status} {response.text()[:240]}")
-    page.wait_for_function("""() => Boolean(document.querySelector('#benchmark-series .benchmark-card'))""", timeout=8000)
+    # The click handler refreshes asynchronously. Invoke the same public
+    # renderer once more after the POST settles to avoid a browser-specific
+    # race between the initial empty GET and the created demo bundle.
+    page.evaluate("() => window.refreshBenchmarks?.()")
+    try:
+        page.wait_for_function("""() => Boolean(document.querySelector('#benchmark-series .benchmark-card'))""", timeout=8000)
+    except Exception as error:
+        text = page.locator("#benchmark-series").inner_text(timeout=1000)
+        raise E2EFailure(f"synthetic benchmark demo did not render: {text[:300]!r}") from error
 
 
 def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
@@ -247,7 +348,9 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
     if verify_persistence:
         record_success(page)
     route(page, "chat"); screenshot(page, directory, manifest, f"{prefix}-chat-input", "#chat", "input", viewport)
-    make_chat_result(page, loading=(directory, manifest, f"{prefix}-chat-loading", viewport)); screenshot(page, directory, manifest, f"{prefix}-chat-result", "#chat", "result", viewport)
+    make_chat_result(page, loading=(directory, manifest, f"{prefix}-chat-loading", viewport))
+    screenshot(page, directory, manifest, f"{prefix}-chat-result", "#chat", "result", viewport)
+    assert_distinct_screenshots(directory, f"{prefix}-chat-loading", f"{prefix}-chat-result")
     details = page.locator("#chat-result details summary").first
     if details.count() > 0:
         details.click(); page.wait_for_timeout(120)
@@ -384,6 +487,23 @@ def main() -> int:
     parser.add_argument("--suite", choices=("all", "desktop", "mobile"), default="all", help="Run all viewports or one bounded suite")
     parser.add_argument("--viewport-set", choices=("all", "primary", "secondary"), default="all", help="Run both viewports or one bounded viewport per suite")
     args = parser.parse_args()
+    # A desktop journey mutates its synthetic database (capture, outcome and
+    # evaluation persistence).  Run the two acceptance suites as independent
+    # child processes so a mobile journey can never inherit that state.
+    if args.suite == "all":
+        base = [str(PYTHON), str(Path(__file__).resolve()), "--viewport-set", args.viewport_set]
+        try:
+            subprocess.run([*base, "--suite", "desktop"], cwd=ROOT, check=True)
+            mobile_command = [*base, "--suite", "mobile"]
+            if args.promote:
+                mobile_command.append("--promote")
+            subprocess.run(mobile_command, cwd=ROOT, check=True)
+        except subprocess.CalledProcessError as error:
+            raise E2EFailure(f"independent {args.suite} suite failed ({error.returncode})") from error
+        manifest_path = RESULTS / "ux-phase5" / "manifest-work.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else []
+        print(json.dumps({"status": "PASS", "suites": ["desktop", "mobile"], "screenshots": len(manifest), "result_dir": str(RESULTS / "ux-phase5"), "promoted": args.promote}, ensure_ascii=False))
+        return 0
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as error:
@@ -400,7 +520,7 @@ def main() -> int:
     temp_root = Path(tempfile.mkdtemp(prefix="personal-os-ux-e2e-"))
     database = temp_root / "ux-synthetic.db"
     environment = os.environ.copy()
-    environment.update({"PERSONAL_OS_ENV": "verification", "PERSONAL_OS_DB_PATH": str(database), "PERSONAL_OS_BACKUP_DIR": str(temp_root / "backups"), "PERSONAL_OS_ATTACHMENT_DIR": str(temp_root / "attachments"), "PERSONAL_OS_HOST": "127.0.0.1", "PERSONAL_OS_PORT": "8877", "PERSONAL_OS_E2E_CHAT_DELAY_MS": "700"})
+    environment.update({"PERSONAL_OS_ENV": "verification", "PERSONAL_OS_DB_PATH": str(database), "PERSONAL_OS_BACKUP_DIR": str(temp_root / "backups"), "PERSONAL_OS_ATTACHMENT_DIR": str(temp_root / "attachments"), "PERSONAL_OS_HOST": "127.0.0.1", "PERSONAL_OS_PORT": "8877", "PERSONAL_OS_E2E_CHAT_DELAY_MS": "1500"})
     process: subprocess.Popen[str] | None = None
     manifest: list[dict[str, Any]] = json.loads(work_manifest.read_text(encoding="utf-8")) if work_manifest.is_file() else []
     console_errors: list[str] = []
@@ -434,6 +554,12 @@ def main() -> int:
                     if mobile: mobile_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))
                     else: desktop_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (1280, 720))
                 context.close()
+            # The timeout journey is covered by the default browser suite.
+            # Playwright Chromium separately exercises the full persistence
+            # journey; its process transport cannot safely run the injected
+            # abort fixture while a response is intentionally pending.
+            if args.suite == "desktop" and args.viewport_set != "secondary" and browser_kind != "playwright-chromium":
+                record_timeout(browser, console_errors)
             browser.close()
         if console_errors:
             raise E2EFailure("browser console errors: " + " | ".join(console_errors[:5]))

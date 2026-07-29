@@ -12,6 +12,7 @@ All public screenshots use fixed synthetic verification data only.
 
 See [UX Phase 5 Visual Review](docs/ux_phase5_visual_review.md) for the review conditions and representative screens.
 See [the Phase 5 final remediation record](docs/ux_phase5_final_remediation.md) for synthetic-data safeguards, explicit screenshot approval, and reproducible E2E commands.
+See [the Phase A stability record](docs/phase_a_stability.md) for isolated browser journeys, timeout handling, Chromium verification, and benchmark comparison safeguards.
 
 ## Rebuild additions (2026-07-26)
 

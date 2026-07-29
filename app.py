@@ -3125,6 +3125,34 @@ def benchmark_percentile_band(distribution: object, personal_value: object) -> s
         return None
     labels = ("below_p10", "p10_p25", "p25_p50", "p50_p75", "p75_p90", "above_p90")
     return next((labels[index] for index, boundary in enumerate(values) if personal < boundary), labels[-1])
+
+
+def benchmark_comparison_group_key(series: dict[str, object]) -> str:
+    """Return a stable group key only when comparison conditions are identical.
+
+    Statistic type is deliberately excluded: mean and median describe the same
+    population context and belong on one card.  Every scope, period, source,
+    and measurement distinction is retained so unlike series cannot be
+    visually blended into a false comparison.
+    """
+    latest = (series.get("observations") or [{}])[0]
+    contract = _json_object(series.get("metric_contract"))
+    context = {
+        "metric_key": series.get("metric_key"),
+        "source_url": series.get("source_url"),
+        "publisher": series.get("publisher"),
+        "population_scope": series.get("population_scope"),
+        "geography": series.get("geography"),
+        "segment_definition": _json_object(series.get("segment_definition")),
+        "reference_period": latest.get("reference_period") if isinstance(latest, dict) else None,
+        "version": series.get("version"),
+        "statistical_unit": contract.get("statistical_unit"),
+        "measurement_kind": contract.get("measurement_kind"),
+        "time_basis": contract.get("time_basis"),
+        "canonical_unit": contract.get("canonical_unit"),
+    }
+    encoded = json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "benchmark:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
 PERSONAL_SPACE_COLORS = {
     "finance": "#22C55E", "travel": "#38BDF8", "housing": "#F59E0B", "relationship": "#F472B6",
     "work": "#6366F1", "health": "#EF4444", "life": "#EAB308", "lifestyle": "#EAB308",
@@ -3286,6 +3314,7 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
                 observation["distribution"] = _json_object(observation.pop("distribution_json", "{}"))
                 observation["segment_values"] = _json_object(observation.pop("segment_values_json", "{}"))
             item["observations"] = observations
+            item["comparison_group_key"] = benchmark_comparison_group_key(item)
             item["personal"] = None
             item["compatibility"] = "reference_only"
             item["comparison"] = {"compatibility": "reference_only", "reasons": [{"code": "no_confirmed_current_fact"}]}
