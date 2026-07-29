@@ -1,53 +1,23 @@
 {
   "version": "1",
-  "generated_at": "2026-07-29T12:13:52.766660+00:00",
+  "generated_at": "2026-07-29T13:27:53.733623+00:00",
   "environment": "verification",
   "data_type": "synthetic",
   "screenshots": [
     {
-      "file": "desktop-1280-today.png",
+      "file": "desktop-1280-benchmark.png",
       "viewport": {
         "width": 1280,
         "height": 720
       },
-      "route": "#today",
-      "state": "default",
+      "route": "#explore",
+      "state": "benchmark",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "546b00c74d162b2d25b8e8b82ac3efd17166b46161c638c25fd4ed026e8a15d6"
-    },
-    {
-      "file": "desktop-1280-today-digest.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#today",
-      "state": "daily-digest",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "546b00c74d162b2d25b8e8b82ac3efd17166b46161c638c25fd4ed026e8a15d6"
-    },
-    {
-      "file": "desktop-1280-memory.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#memory",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "c68365e23ea667cfb3d42418fd0c0a84581c34927a2382e1a43826584108dbf0"
+      "sha256": "b53cbc70dfea3f5d8af6e4268aa437c596681c2721f3e93dc1fdc53310922266"
     },
     {
       "file": "desktop-1280-chat-loading.png",
@@ -60,7 +30,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "d7fd78c8d9be05297f2ffb7222c823bfa4d7337f40a118114e7e90809ad38030"
     },
@@ -75,24 +45,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "1d0bc018b612f677aea40e124db4aa702226e150e4e3b144630cf9068b5b1f24"
-    },
-    {
-      "file": "desktop-1280-decisions.png",
-      "viewport": {
-        "width": 1280,
-        "height": 720
-      },
-      "route": "#decisions",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "1ece5eccd465f770702bb6dce7a22a7a608bbed55447205e5fd8daef932fa426"
     },
     {
       "file": "desktop-1280-decision-result-sheet.png",
@@ -105,24 +60,24 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "a4fa86ee310538043f7de53e7ac8043efa844b05efdb3bb2c61dc0a787f16351"
     },
     {
-      "file": "desktop-1280-money.png",
+      "file": "desktop-1280-decisions.png",
       "viewport": {
         "width": 1280,
         "height": 720
       },
-      "route": "#money",
-      "state": "domain",
+      "route": "#decisions",
+      "state": "default",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "ce243976ac024e12169e27838298558590a316b409195e4da855e7eaee6e074b"
+      "sha256": "1ece5eccd465f770702bb6dce7a22a7a608bbed55447205e5fd8daef932fa426"
     },
     {
       "file": "desktop-1280-explore-space.png",
@@ -135,24 +90,99 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "667d5b276068ec8ee2a879079cb5eb569c7172960e76ef81d9531d0bc64dbe2d"
+      "sha256": "7953f25dde056c1adc6c29c0f61ae874d13d851357f171ea814c21b07b69dcc8"
     },
     {
-      "file": "desktop-1280-benchmark.png",
+      "file": "desktop-1280-memory.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#memory",
+      "state": "default",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "2b9f2fb9a1d18ebcfba39a7ff72f429330f5fec19e3e6b3aaccdcf2631f3a09e"
+    },
+    {
+      "file": "desktop-1280-money.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#money",
+      "state": "domain",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "ce243976ac024e12169e27838298558590a316b409195e4da855e7eaee6e074b"
+    },
+    {
+      "file": "desktop-1280-timeline-detail.png",
       "viewport": {
         "width": 1280,
         "height": 720
       },
       "route": "#explore",
-      "state": "benchmark",
+      "state": "timeline-detail",
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "0818910de6400715826b06b2ec75586af23da7b274614d8c89ec576202f3f632"
+      "sha256": "8c7358d6edd7423b3eb67740dcc86e3854e3763cc0f1023b611fb1fe9bda9dc4"
+    },
+    {
+      "file": "desktop-1280-timeline.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#explore",
+      "state": "timeline",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "cee30db2b9bf0aca02ac34c45e0863b4b31bbfb91aa48f17dc3d17a5d3c4ea95"
+    },
+    {
+      "file": "desktop-1280-today-digest.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#today",
+      "state": "daily-digest",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "546b00c74d162b2d25b8e8b82ac3efd17166b46161c638c25fd4ed026e8a15d6"
+    },
+    {
+      "file": "desktop-1280-today.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#today",
+      "state": "default",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "546b00c74d162b2d25b8e8b82ac3efd17166b46161c638c25fd4ed026e8a15d6"
     },
     {
       "file": "desktop-1440-today.png",
@@ -165,159 +195,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "0b60589cd1728b61378a4806493d6168927e539dc61b8891fa4776ea1139c15c"
-    },
-    {
-      "file": "mobile-390-today.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#today",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "9c33e85f5f9f9443ac3be5d7e079aee543db78d230387474ba86061b0472ee53"
-    },
-    {
-      "file": "mobile-390-today-digest.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#today",
-      "state": "daily-digest",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "9c33e85f5f9f9443ac3be5d7e079aee543db78d230387474ba86061b0472ee53"
-    },
-    {
-      "file": "mobile-390-memory.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#memory",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "b8ad8a90751e445289dfe450af3b9311aea22b9f6214ecaee2cc7378e545b546"
-    },
-    {
-      "file": "mobile-390-memory-image.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#memory",
-      "state": "image-input",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "cc40239cf040c912623eeed1fa7b7c37caee9e77497d254b434b33d91094dfd8"
-    },
-    {
-      "file": "mobile-390-chat-result.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#chat",
-      "state": "result",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "d48131d0ed719db0579cd7b8b35f81de875d48fb23aaf8f33492db72fb0280e0"
-    },
-    {
-      "file": "mobile-390-decisions.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#decisions",
-      "state": "default",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "665e211b07e4b560d1937a835419b2dd9db5f50d66d00359b17329ebf4e9f84c"
-    },
-    {
-      "file": "mobile-390-decision-result-sheet.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#decisions",
-      "state": "result-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "3f31ab7a5ff3891d1e413d17d02ecf6d7f3a12ec9e30034dcdea51220ceb5663"
-    },
-    {
-      "file": "mobile-390-more-sheet.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#decisions",
-      "state": "more-sheet",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "b29403b13e36591ceeca57bd3bb6211c648f7ba57d36575c4f885c3affc73710"
-    },
-    {
-      "file": "mobile-390-explore-space.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#explore",
-      "state": "personal-space",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "97d65736530f2259afa2baa61b65360c1dec26521f3b0b917636aab789e837c0"
-    },
-    {
-      "file": "mobile-390-benchmark.png",
-      "viewport": {
-        "width": 390,
-        "height": 844
-      },
-      "route": "#explore",
-      "state": "benchmark",
-      "data_type": "synthetic",
-      "contains_sensitive_data": false,
-      "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
-      "reviewed_by": "codex-visual-review",
-      "sha256": "7e8193793826429c4d1f87b150edd7518c4533f5ae471c0fda4d9ecbeaca9f93"
+      "sha256": "57fee50f7e011a8c400b4f4966120e06c754abf4d4af42585b898bfa2b2d61ab"
     },
     {
       "file": "mobile-375-today.png",
@@ -330,9 +210,204 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T12:15:23.494608+00:00",
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "56b23de3b4f24ef499ebba82af4e9721074213c2bac8efcf32ecc48714b8cc2d"
+      "sha256": "28bf975bbf69bfeeda41c7eb32261e5d0efc673d6a5371bc0477e4a6e6e01dde"
+    },
+    {
+      "file": "mobile-390-benchmark.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#explore",
+      "state": "benchmark",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "9ac2458ba06f1262e3b160ea9487f6b90579068097ced470ecb7a5e6d7ce25d3"
+    },
+    {
+      "file": "mobile-390-chat-result.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#chat",
+      "state": "result",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "d48131d0ed719db0579cd7b8b35f81de875d48fb23aaf8f33492db72fb0280e0"
+    },
+    {
+      "file": "mobile-390-decision-result-sheet.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#decisions",
+      "state": "result-sheet",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "3f31ab7a5ff3891d1e413d17d02ecf6d7f3a12ec9e30034dcdea51220ceb5663"
+    },
+    {
+      "file": "mobile-390-decisions.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#decisions",
+      "state": "default",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "665e211b07e4b560d1937a835419b2dd9db5f50d66d00359b17329ebf4e9f84c"
+    },
+    {
+      "file": "mobile-390-explore-space.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#explore",
+      "state": "personal-space",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "ca84a2e55599843f45a5a7e9756f9d1805ed1df85c858f2ce1bf32f91c8158a3"
+    },
+    {
+      "file": "mobile-390-memory-image.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#memory",
+      "state": "image-input",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "9b7c1e2b6783a9091fb460ca0dae2406fe2c8957a6e18dcfe4833bb1eacb0232"
+    },
+    {
+      "file": "mobile-390-memory.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#memory",
+      "state": "default",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "5b975071381269680da17aef2e739f099e3f666c674e895c6d9d7951a8db2f27"
+    },
+    {
+      "file": "mobile-390-more-sheet.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#decisions",
+      "state": "more-sheet",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "b29403b13e36591ceeca57bd3bb6211c648f7ba57d36575c4f885c3affc73710"
+    },
+    {
+      "file": "mobile-390-timeline-detail.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#explore",
+      "state": "timeline-detail",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "8201c57ae57d30852de6a01ce3ca9becfea0258b035c09d7732104cd51db0bb6"
+    },
+    {
+      "file": "mobile-390-timeline-empty.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#explore",
+      "state": "timeline-empty",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "31897f16c5a4929dfc57c13b8b79bd3fb38b9dfccf97013218aedbd38621df23"
+    },
+    {
+      "file": "mobile-390-timeline.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#explore",
+      "state": "timeline",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "e9c2231a4521847d7496c209f2ffab1bc8798fe6951a6476fa2aad003caa090a"
+    },
+    {
+      "file": "mobile-390-today-digest.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#today",
+      "state": "daily-digest",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "9c33e85f5f9f9443ac3be5d7e079aee543db78d230387474ba86061b0472ee53"
+    },
+    {
+      "file": "mobile-390-today.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#today",
+      "state": "default",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "9c33e85f5f9f9443ac3be5d7e079aee543db78d230387474ba86061b0472ee53"
     }
   ]
 }

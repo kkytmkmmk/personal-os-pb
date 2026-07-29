@@ -35,8 +35,90 @@
   async function importBundle(event) { event.preventDefault(); const notice = $('benchmark-import-notice'); try { const response = await fetch('/api/benchmarks/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rawBundle()) }), data = await response.json(); if (!response.ok) throw new Error(data.error || '保存できませんでした'); notice.textContent = `保存しました（${data.datasets}件）`; refreshBenchmarks(); } catch (error) { notice.textContent = error.message; } }
   async function loadDemo() { const response = await fetch('/api/benchmarks/demo', { method: 'POST' }), data = await response.json(); $('benchmark-import-notice').textContent = response.ok ? 'DEMOデータを追加しました。相談には使いません。' : (data.error || '追加できませんでした'); if (response.ok) refreshBenchmarks(); }
   async function copyPrompt() { const prompt = '公開統計からPopulation Benchmark BundleのJSONだけを作成してください。個人情報は含めないでください。bundle_version,datasets,source_name,publisher,source_url,source_type,methodology,metric_key,metric_name,domain,unit,statistic_type,definition,population_scope,segment_definition,metric_contract(metric_key/statistical_unit/measurement_kind/time_basis/canonical_unit),observations(reference_period,published_at,value,sample_size,distribution,revision)を含めてください。total_assetsとfinancial_assets、individualとhousehold、meanとmedianを混同しないでください。'; try { await navigator.clipboard.writeText(prompt); $('benchmark-import-notice').textContent = 'ChatGPT用プロンプトをコピーしました。'; } catch { $('benchmark-import-notice').textContent = 'コピーできませんでした。'; } }
+  const timelineKindLabels = { fact_started: '新しく記録', fact_changed: '情報を更新', preference_changed: '好みが変化', plan_created: '計画を作成', plan_changed: '計画を更新', decision_created: '判断候補を追加', decision_made: '判断', executed: '実行', result_recorded: '結果を記録', evaluation_recorded: '後日評価', travel_event: '旅行', housing_event: '住居', finance_snapshot: '資産', relationship_event: '人間関係', inference_confirmed: '確認済みの傾向' };
+  const timelineKindLabel = kind => timelineKindLabels[String(kind || '').toLowerCase()] || '記録';
+  let timelineCursor = null, timelineEventMap = new Map();
+  const timelineDate = value => {
+    if (!value) return '日時不明';
+    const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+    return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }).format(date);
+  };
+  function timelineQuery(reset = false) {
+    const params = new URLSearchParams({ limit: '30' });
+    const period = $('timeline-period')?.value || 'all';
+    if (period !== 'all') {
+      const days = { month: 31, quarter: 93, year: 366 }[period] || 0;
+      const since = new Date(); since.setDate(since.getDate() - days);
+      params.set('from', since.toISOString().slice(0, 10));
+    }
+    const domain = $('timeline-domain')?.value || '', kind = $('timeline-kind')?.value || '';
+    if (domain) params.set('domain', domain);
+    if (kind) params.set('kind', kind);
+    if (!reset && timelineCursor) params.set('cursor', timelineCursor);
+    return params;
+  }
+  function timelineEmpty() { return '<div class="empty-state"><p>まだ表示できる変化がありません。</p><span class="help">記録や判断を続けると、ここに「以前と今の違い」が表示されます。</span><div class="actions"><button type="button" class="secondary" data-timeline-record>記録する</button><button type="button" class="secondary" data-timeline-today>今日を見る</button></div></div>'; }
+  function timelineCard(event) {
+    const source = event.temporal_source === 'created_at' ? '記録日時' : '';
+    return `<article class="timeline-event" data-timeline-event="${esc(event.id)}" tabindex="0" role="button" aria-label="${esc(event.title)}の詳細を見る"><div class="timeline-marker" aria-hidden="true"></div><div class="timeline-event-date">${esc(source ? `${source} ${timelineDate(event.occurred_at)}` : timelineDate(event.occurred_at))}</div><div class="timeline-event-main"><div class="timeline-event-meta"><span class="pill">${esc(timelineKindLabel(event.event_kind))}</span><span>${esc(domainLabel(event.domain))}</span></div><h3>${esc(event.title)}</h3><p>${esc(event.summary || '内容を確認できます')}</p>${event.action?.type === 'open_decision' ? '<span class="timeline-action">判断を見る</span>' : ''}</div></article>`;
+  }
+  function bindTimelineActions(target) {
+    target.querySelectorAll('[data-timeline-record]').forEach(button => button.addEventListener('click', () => window.personalOsNavigate?.('home')));
+    target.querySelectorAll('[data-timeline-today]').forEach(button => button.addEventListener('click', () => window.personalOsNavigate?.('today')));
+    target.querySelectorAll('[data-timeline-event]').forEach(card => {
+      const open = () => openTimelineDetail(card.dataset.timelineEvent, card);
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+    });
+  }
+  async function refreshTimeline({ append = false } = {}) {
+    const target = $('timeline-list'), more = $('timeline-more'); if (!target) return;
+    if (!append) { timelineCursor = null; target.setAttribute('aria-busy', 'true'); target.innerHTML = '<p class="help">変化を読み込んでいます…</p>'; }
+    try {
+      const response = await fetch(`/api/timeline?${timelineQuery(!append)}`), payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || '変化を読み込めませんでした');
+      const events = Array.isArray(payload.events) ? payload.events : [];
+      if (!append) timelineEventMap = new Map();
+      events.forEach(event => timelineEventMap.set(event.id, event));
+      if (!append) target.innerHTML = events.length ? events.map(timelineCard).join('') : timelineEmpty();
+      else target.insertAdjacentHTML('beforeend', events.map(timelineCard).join(''));
+      bindTimelineActions(target);
+      timelineCursor = payload.next_cursor || null;
+      if (more) more.hidden = !timelineCursor;
+    } catch {
+      target.innerHTML = '<div class="empty-state"><p>変化を読み込めませんでした。</p><span class="help">入力内容や記録は失われていません。</span><div class="actions"><button type="button" class="secondary" data-timeline-reload>再読み込み</button></div></div>';
+      target.querySelector('[data-timeline-reload]')?.addEventListener('click', () => refreshTimeline());
+    } finally { target.removeAttribute('aria-busy'); }
+  }
+  async function openTimelineDetail(eventId, opener) {
+    const content = $('timeline-detail-content'); if (!content) return;
+    content.innerHTML = '<p class="help">詳細を読み込んでいます…</p>';
+    window.personalOsSheets?.open('timeline-detail-sheet', opener);
+    try {
+      let event = timelineEventMap.get(eventId);
+      if (!event) {
+        const response = await fetch(`/api/timeline/${encodeURIComponent(eventId)}`);
+        event = await response.json();
+        if (!response.ok) throw new Error(event.error || '詳細を読み込めませんでした');
+      }
+      const detail = event.detail || {};
+      const comparison = detail.previous_value && detail.new_value ? `<section><h3>変更</h3><p>${esc(detail.previous_value)} → ${esc(detail.new_value)}</p></section>` : '';
+      const basis = (event.basis || []).length ? '<section><h3>根拠</h3><p class="help">確認済みの記録・判断をもとに表示しています。</p></section>' : '<section><h3>根拠</h3><p class="help">確認できる根拠はまだありません。</p></section>';
+      const compare = event.event_kind === 'fact_changed' ? `<button type="button" class="secondary" data-timeline-compare="${esc(event.id)}">今と比べる</button>` : '';
+      const decision = event.action?.type === 'open_decision' ? '<button type="button" class="secondary" data-timeline-decision>同じ判断を見る</button>' : '';
+      content.innerHTML = `<p class="meta">${esc(timelineDate(event.occurred_at))} · ${esc(timelineKindLabel(event.event_kind))} · ${esc(domainLabel(event.domain))}</p><h3>${esc(event.title)}</h3><p>${esc(event.summary || '内容を確認できます')}</p>${comparison}${basis}<p class="help">${detail.currentness === 'current' ? '現在の情報です。' : detail.currentness ? '過去の情報です。' : ''}</p><div class="actions">${compare}${decision}</div>`;
+      content.querySelector('[data-timeline-decision]')?.addEventListener('click', () => window.personalOsNavigate?.('decisions'));
+      content.querySelector('[data-timeline-compare]')?.addEventListener('click', () => {
+        const prompt = `${timelineDate(event.occurred_at)}の${domainLabel(event.domain)}に関する記録と、現在の${domainLabel(event.domain)}の情報を比較してください`;
+        window.personalOsSheets?.close($('timeline-detail-sheet'));
+        window.personalOsNavigate?.('chat');
+        window.setTimeout(() => { const input = $('chat-message'); if (input) { input.value = prompt; input.focus(); input.dispatchEvent(new Event('input', { bubbles: true })); } }, 0);
+      });
+    } catch { content.innerHTML = '<p>詳細を読み込めませんでした。</p>'; }
+  }
   function wireGestures() { const canvas = $('personal-space-canvas'); if (!canvas) return; let drag = null, pinch = null; const reset = $('space-reset') || (() => { const button = document.createElement('button'); button.id = 'space-reset'; button.type = 'button'; button.className = 'secondary'; button.textContent = '表示をリセット'; canvas.parentElement.before(button); return button; })(); reset.addEventListener('click', () => { camera = { yaw: .16, pitch: -.18, zoom: 1, panX: 0, panY: 0 }; renderSpace(); }); canvas.addEventListener('wheel', event => { event.preventDefault(); camera.zoom = Math.max(.5, Math.min(2.4, camera.zoom * (event.deltaY > 0 ? .9 : 1.1))); renderSpace(); }, { passive: false }); canvas.addEventListener('pointerdown', event => { canvas.setPointerCapture?.(event.pointerId); drag = { x: event.clientX, y: event.clientY, pan: event.shiftKey, distance: 0 }; }); canvas.addEventListener('pointermove', event => { if (!drag) return; const dx = event.clientX - drag.x, dy = event.clientY - drag.y; drag.x = event.clientX; drag.y = event.clientY; drag.distance += Math.hypot(dx, dy); if (drag.pan) { camera.panX += dx; camera.panY += dy; } else { camera.yaw += dx * .012; camera.pitch = Math.max(-1.1, Math.min(1.1, camera.pitch + dy * .012)); } renderSpace(); }); const finish = event => { if (!drag) return; const moved = drag.distance > 5; drag = null; if (moved) return; const rect = canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top, nearest = (canvas._nodes || []).map(node => ({ node, distance: Math.hypot(node.point.x - x, node.point.y - y) })).sort((a, b) => a.distance - b.distance)[0]; if (nearest?.distance <= 30) selectNode(nearest.node); }; canvas.addEventListener('pointerup', finish); ['pointercancel', 'lostpointercapture'].forEach(type => canvas.addEventListener(type, () => { drag = null; })); canvas.addEventListener('touchstart', event => { if (event.touches.length === 2) pinch = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY); }, { passive: true }); canvas.addEventListener('touchmove', event => { if (event.touches.length !== 2 || !pinch) return; const size = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY); camera.zoom = Math.max(.5, Math.min(2.4, camera.zoom * size / pinch)); pinch = size; renderSpace(); }, { passive: true }); canvas.addEventListener('touchcancel', () => { pinch = null; }); }
-  function wire() { document.querySelectorAll('[data-explore-mode]').forEach(button => button.addEventListener('click', () => { const mode = button.dataset.exploreMode; ['space', 'benchmark'].forEach(name => { $(`explore-${name}`)?.classList.toggle('hidden', name !== mode); document.querySelector(`[data-explore-mode="${name}"]`)?.classList.toggle('active', name === mode); }); mode === 'space' ? refreshSpace() : refreshBenchmarks(); })); ['space-search', 'space-domain', 'space-kind', 'space-current', 'space-history', 'space-edges'].forEach(id => $(id)?.addEventListener(id === 'space-search' ? 'input' : 'change', renderSpace)); $('space-sensitive')?.addEventListener('change', refreshSpace); $('benchmark-preview')?.addEventListener('click', previewBundle); $('benchmark-import-form')?.addEventListener('submit', importBundle); $('benchmark-load-demo')?.addEventListener('click', loadDemo); $('benchmark-copy-prompt')?.addEventListener('click', copyPrompt); addEventListener('resize', renderSpace); wireGestures(); }
-  window.refreshPersonalSpace = refreshSpace; window.refreshBenchmarks = refreshBenchmarks; window.refreshExplore = () => { document.querySelector('[data-explore-mode].active')?.dataset.exploreMode === 'benchmark' ? refreshBenchmarks() : refreshSpace(); };
+  function refreshExploreMode(mode) { if (mode === 'timeline') return refreshTimeline(); if (mode === 'benchmark') return refreshBenchmarks(); return refreshSpace(); }
+  function wire() { document.querySelectorAll('[data-explore-mode]').forEach(button => button.addEventListener('click', () => { const mode = button.dataset.exploreMode; ['space', 'benchmark', 'timeline'].forEach(name => { $(`explore-${name}`)?.classList.toggle('hidden', name !== mode); document.querySelector(`[data-explore-mode="${name}"]`)?.classList.toggle('active', name === mode); }); refreshExploreMode(mode); })); ['space-search', 'space-domain', 'space-kind', 'space-current', 'space-history', 'space-edges'].forEach(id => $(id)?.addEventListener(id === 'space-search' ? 'input' : 'change', renderSpace)); $('space-sensitive')?.addEventListener('change', refreshSpace); ['timeline-period', 'timeline-domain', 'timeline-kind'].forEach(id => $(id)?.addEventListener('change', () => refreshTimeline())); $('timeline-more')?.addEventListener('click', () => refreshTimeline({ append: true })); $('benchmark-preview')?.addEventListener('click', previewBundle); $('benchmark-import-form')?.addEventListener('submit', importBundle); $('benchmark-load-demo')?.addEventListener('click', loadDemo); $('benchmark-copy-prompt')?.addEventListener('click', copyPrompt); addEventListener('resize', renderSpace); wireGestures(); }
+  window.refreshPersonalSpace = refreshSpace; window.refreshBenchmarks = refreshBenchmarks; window.refreshTimeline = refreshTimeline; window.refreshExplore = () => refreshExploreMode(document.querySelector('[data-explore-mode].active')?.dataset.exploreMode || 'space');
   document.addEventListener('DOMContentLoaded', wire);
 }());

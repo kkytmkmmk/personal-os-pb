@@ -181,6 +181,22 @@ def main() -> int:
                 "support": "supports", "reliability": 1.0, "created_at": stamp,
             })
 
+        # A semantic before/after pair lets the Timeline E2E exercise the
+        # non-mutating "今と比べる" route with wholly synthetic data.
+        old_housing_id = insert(connection, "facts", {
+            "document_id": document_id, "chunk_id": chunk_id, "source_chunk_id": chunk_id,
+            "subject_scope": "self", "resolved_entity_type": "unknown", "personal_relevance": "personal",
+            "extraction_confidence": 0.98, "truth_confidence": 0.98, "evidence_support_count": 1,
+            "retrieval_eligibility": "eligible", "category": "housing", "fact_type": "status",
+            "occurred_on": "2026-04-01", "valid_from": "2026-04-01", "status": "superseded",
+            "fact_key": "housing.current.home", "value_json": json.dumps({"layout": "1R", "size_sqm": 25}, ensure_ascii=False),
+            "summary": "以前のデモ住居", "confidence": 0.98, "extractor": "synthetic-fixture",
+            "extractor_model": "none", "prompt_version": "ux-demo-v1", "extracted_at": stamp, "created_at": stamp,
+        })
+        insert(connection, "fact_reviews", {"fact_id": old_housing_id, "state": "confirmed", "reason": "Synthetic timeline fixture", "reviewed_at": stamp, "created_at": stamp})
+        insert(connection, "fact_evidence", {"fact_id": old_housing_id, "evidence_kind": "synthetic", "source_chunk_id": chunk_id, "source_group": "ux-demo", "source_identity": "synthetic-only", "quote": source_text, "support": "supports", "reliability": 1.0, "created_at": stamp})
+        connection.execute("UPDATE facts SET supersedes_fact_id=? WHERE id=?", (old_housing_id, fact_ids[6]))
+
         insert(connection, "finance_transactions", {
             "fact_id": fact_ids[1], "asset_entity_id": entities["デモ投資信託"], "amount": 123456,
             "normalized_amount": 123456, "currency": "JPY", "transaction_type": "investment", "transaction_kind": "investment",

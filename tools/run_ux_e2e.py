@@ -382,6 +382,74 @@ def verify_empty_daily_digest(page: Any, database: Path, directory: Path, manife
     page.locator("#home").wait_for(state="visible")
 
 
+def verify_timeline(page: Any, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int], *, mobile: bool) -> None:
+    """Exercise the real timeline API, filters, sheet and non-sending compare action."""
+    route(page, "explore")
+    page.locator("[data-explore-mode='timeline']").click()
+    page.locator("#explore-timeline").wait_for(state="visible")
+    page.locator("#timeline-list [data-timeline-event]").first.wait_for(state="visible", timeout=5000)
+    if mobile:
+        page.locator("#timeline-list [data-timeline-event]").first.scroll_into_view_if_needed()
+        page.wait_for_timeout(80)
+    screenshot(page, directory, manifest, f"{prefix}-timeline", "#explore", "timeline", viewport)
+    page.locator("#timeline-domain").select_option("travel")
+    page.locator("#timeline-list [data-timeline-event]").first.wait_for(state="visible", timeout=5000)
+    labels = page.locator("#timeline-list").inner_text()
+    if "旅行" not in labels:
+        raise E2EFailure("timeline domain filter did not render travel events")
+    event = page.locator("#timeline-list [data-timeline-event]").first
+    event.click()
+    page.locator("#timeline-detail-sheet").wait_for(state="visible")
+    page.locator("#timeline-detail-content").wait_for(state="visible")
+    screenshot(page, directory, manifest, f"{prefix}-timeline-detail", "#explore", "timeline-detail", viewport)
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.querySelector('#timeline-detail-sheet')?.hidden === true", timeout=3000)
+    if page.evaluate("() => document.activeElement?.dataset?.timelineEvent") != event.get_attribute("data-timeline-event"):
+        raise E2EFailure("timeline detail sheet did not restore focus to its event card")
+    # The synthetic seed contains one before/after housing Fact.  Use the
+    # public domain filter and the rendered Japanese type label, rather than
+    # leaking an internal event ID into the acceptance journey.
+    with page.expect_response(lambda response: "/api/timeline?" in response.url and "domain=housing" in response.url, timeout=5000):
+        page.locator("#timeline-domain").select_option("housing")
+    page.wait_for_function("() => { const text=document.querySelector('#timeline-list')?.textContent || ''; return text.includes('住居') && text.includes('情報を更新'); }", timeout=5000)
+    candidate = page.locator("#timeline-list [data-timeline-event^='fact-']").filter(has_text="住居の情報を更新").first
+    if candidate.count() == 0:
+        raise E2EFailure("timeline synthetic fact-change event is missing")
+    candidate.click(); page.locator("#timeline-detail-sheet").wait_for(state="visible")
+    compare = page.locator("[data-timeline-compare]")
+    if compare.count() == 0:
+        raise E2EFailure("timeline fact-change detail has no compare action: " + page.locator("#timeline-detail-content").inner_text())
+    page.evaluate("() => { document.querySelector('#chat-answer').textContent=''; window.__timelineCompareSent=false; window.addEventListener('personal-os-chat-response', () => { window.__timelineCompareSent=true; }, {once:true}); }")
+    compare.click(); page.locator("#chat").wait_for(state="visible")
+    page.wait_for_timeout(120)
+    if not page.locator("#chat-message").input_value().strip() or page.locator("#chat-answer").inner_text().strip() or page.evaluate("() => window.__timelineCompareSent === true"):
+        raise E2EFailure("timeline comparison was not a non-sending consultation draft")
+    if mobile:
+        # The same shared Sheet must stay within the small viewport.
+        assert_layout(page, mobile=True)
+
+
+def verify_empty_timeline(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int]) -> None:
+    # Do not leave the preceding focused-domain filter on the empty-state
+    # evidence; this is an empty personal timeline, not an empty sub-domain.
+    page.locator("#timeline-domain").select_option("")
+    page.wait_for_timeout(80)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM execution_events")
+        connection.execute("DELETE FROM plans")
+        connection.execute("DELETE FROM decisions")
+        connection.execute("DELETE FROM personal_inferences")
+        connection.execute("UPDATE facts SET retrieval_eligibility='excluded'")
+    route(page, "explore")
+    page.locator("[data-explore-mode='timeline']").click()
+    page.locator("#timeline-list .empty-state").wait_for(state="visible", timeout=5000)
+    page.locator("#timeline-list .empty-state").scroll_into_view_if_needed()
+    page.wait_for_timeout(80)
+    screenshot(page, directory, manifest, f"{prefix}-timeline-empty", "#explore", "timeline-empty", viewport)
+    page.locator("#timeline-list [data-timeline-record]").click()
+    page.locator("#home").wait_for(state="visible")
+
+
 def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "desktop-1280" if viewport[0] == 1280 else "desktop-1440"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
@@ -425,6 +493,7 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
         open_import.click(); page.locator("#benchmark-import-sheet").wait_for(state="visible")
     screenshot(page, directory, manifest, f"{prefix}-benchmark-import-sheet", "#explore", "benchmark-import-sheet", viewport)
     page.keyboard.press("Escape")
+    verify_timeline(page, directory, manifest, prefix, viewport, mobile=False)
     route(page, "settings"); screenshot(page, directory, manifest, f"{prefix}-admin", "#settings", "default", viewport)
     route(page, "home")
     page.route("**/api/ingest", lambda request: request.fulfill(status=500, content_type="application/json", body='{"error":"Synthetic validation error"}'))
@@ -479,6 +548,7 @@ def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], v
     if open_import.count() > 0: open_import.click()
     screenshot(page, directory, manifest, f"{prefix}-benchmark-import-sheet", "#explore", "benchmark-import-sheet", viewport)
     page.keyboard.press("Escape")
+    verify_timeline(page, directory, manifest, prefix, viewport, mobile=True)
     for tab in ("money", "housing"):
         route(page, tab); wait_domain(page, tab)
         screenshot(page, directory, manifest, f"{prefix}-{tab}", f"#{tab}", "domain", viewport)
@@ -502,15 +572,19 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
         "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
         "desktop-1280-today-digest.png",
         "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
-        "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png",
+        "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png", "desktop-1280-timeline.png", "desktop-1280-timeline-detail.png",
         "mobile-390-today.png", "mobile-390-memory.png", "mobile-390-memory-image.png",
         "mobile-390-today-digest.png",
         "mobile-390-chat-result.png", "mobile-390-decisions.png", "mobile-390-decision-result-sheet.png",
-        "mobile-390-more-sheet.png", "mobile-390-explore-space.png", "mobile-390-benchmark.png",
+        "mobile-390-more-sheet.png", "mobile-390-explore-space.png", "mobile-390-benchmark.png", "mobile-390-timeline.png", "mobile-390-timeline-detail.png", "mobile-390-timeline-empty.png",
         "desktop-1440-today.png", "mobile-375-today.png",
     }
-    public_manifest = [item for item in manifest if item["file"] in public_names]
-    missing = public_names - {item["file"] for item in public_manifest}
+    # A secondary viewport run appends to the working manifest.  Retain only
+    # the newest instance of each public filename so repeated local E2E runs
+    # never inflate a public manifest with duplicate entries.
+    by_name = {item["file"]: item for item in manifest if item["file"] in public_names}
+    public_manifest = [by_name[name] for name in sorted(by_name)]
+    missing = public_names - set(by_name)
     if missing:
         raise E2EFailure("Missing required public review screenshots: " + ", ".join(sorted(missing)))
     if PUBLIC_DIR.exists():
@@ -602,6 +676,8 @@ def main() -> int:
                 if args.viewport_set == "primary":
                     prefix = "mobile-390" if mobile else "desktop-1280"
                     verify_empty_daily_digest(page, database, run_dir, manifest, prefix, first)
+                    if mobile:
+                        verify_empty_timeline(page, database, run_dir, manifest, prefix, first)
                 context.close()
             # The timeout journey is covered by the default browser suite.
             # Playwright Chromium separately exercises the full persistence

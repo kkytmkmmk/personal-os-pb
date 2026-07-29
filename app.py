@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import base64
 import json
 import os
 import re
@@ -7334,6 +7335,289 @@ def today_digest() -> dict[str, object]:
     }
 
 
+# The timeline is a read-only projection.  It deliberately does not add a
+# second "history" database: facts, decisions and execution events remain the
+# authoritative records and this layer only gives them a shared, semantic
+# event contract for Explore.
+TIMELINE_KIND_LABELS = {
+    "fact_started": "新しく記録",
+    "fact_changed": "情報を更新",
+    "preference_changed": "好みが変化",
+    "plan_created": "計画を作成",
+    "plan_changed": "計画を更新",
+    "decision_created": "判断候補を追加",
+    "decision_made": "判断",
+    "executed": "実行",
+    "result_recorded": "結果を記録",
+    "evaluation_recorded": "後日評価",
+    "travel_event": "旅行",
+    "housing_event": "住居",
+    "finance_snapshot": "資産",
+    "relationship_event": "人間関係",
+    "inference_confirmed": "確認済みの傾向",
+}
+TIMELINE_SENSITIVE_DOMAINS = {"finance", "relationship", "health"}
+TIMELINE_KIND_FILTERS = {
+    "memory": {"fact_started", "fact_changed", "finance_snapshot", "travel_event", "housing_event", "relationship_event"},
+    "preference": {"preference_changed"},
+    "plan": {"plan_created", "plan_changed"},
+    "decision": {"decision_created", "decision_made"},
+    "executed": {"executed"},
+    "result": {"result_recorded"},
+    "evaluation": {"evaluation_recorded"},
+}
+
+
+def _timeline_domain(value: object) -> str:
+    return canonical_domain(str(value or "other"))
+
+
+def _timeline_timestamp(*values: object) -> tuple[str | None, str]:
+    """Pick content time before database insertion time, without inventing time.
+
+    ISO dates and date-only strings sort correctly together.  ``created_at``
+    is intentionally the final fallback and is exposed as record time to the
+    client so it is not misrepresented as when the underlying event happened.
+    """
+    names = ("occurred_at", "occurred_on", "effective_at", "valid_from", "decided_on",
+             "executed_at", "result_at", "evaluated_at", "source_created_at", "created_at")
+    for name, value in zip(names, values):
+        if value is not None and str(value).strip():
+            return str(value).strip(), name
+    return None, "unknown"
+
+
+def _timeline_safe_text(domain: str, text: object, fallback: str, include_sensitive: bool) -> str:
+    if domain in TIMELINE_SENSITIVE_DOMAINS and not include_sensitive:
+        return fallback
+    return str(text or fallback).strip()[:240]
+
+
+def _timeline_event(*, event_id: str, event_kind: str, domain: object, occurred_at: str | None,
+                    temporal_source: str, title: object, summary: object, basis: list[dict[str, object]],
+                    related: list[dict[str, object]] | None = None, action: dict[str, object] | None = None,
+                    sensitive: bool = False, detail: dict[str, object] | None = None) -> dict[str, object]:
+    normalized_domain = _timeline_domain(domain)
+    return {
+        "id": event_id, "event_kind": event_kind, "domain": normalized_domain,
+        "occurred_at": occurred_at, "temporal_source": temporal_source,
+        "title": str(title or "記録"), "summary": str(summary or ""), "status": "historical",
+        "sensitive": bool(sensitive), "basis": basis, "related": related or [], "action": action,
+        "detail": detail or {},
+    }
+
+
+def _timeline_fact_kind(row: dict[str, object]) -> str:
+    domain, fact_type = _timeline_domain(row.get("category")), str(row.get("fact_type") or "")
+    if row.get("supersedes_fact_id"):
+        return "fact_changed"
+    if fact_type == "preference":
+        return "preference_changed"
+    if domain == "finance" and fact_type in {"asset_balance", "holding", "income"}:
+        return "finance_snapshot"
+    if domain == "travel":
+        return "travel_event"
+    if domain == "housing":
+        return "housing_event"
+    if domain == "relationship":
+        return "relationship_event"
+    return "fact_started"
+
+
+def _timeline_cursor_encode(event: dict[str, object]) -> str:
+    payload = f"{event.get('occurred_at') or ''}|{event.get('id') or ''}"
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _timeline_cursor_decode(value: str | None) -> tuple[str, str] | None:
+    if not value:
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        occurred_at, event_id = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8").split("|", 1)
+        return occurred_at, event_id
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _timeline_fact_value(row: dict[str, object] | None, include_sensitive: bool) -> str:
+    if not row:
+        return ""
+    domain = _timeline_domain(row.get("category"))
+    fallback = f"{_digest_domain_label(domain)}の情報"
+    return _timeline_safe_text(domain, row.get("summary"), fallback, include_sensitive)
+
+
+def timeline_projection(domain: str | None = None, kind: str | None = None, from_date: str | None = None,
+                        to_date: str | None = None, limit: int = 30, cursor: str | None = None,
+                        include_sensitive: bool = False) -> dict[str, object]:
+    """Project confirmed personal history as bounded, de-duplicated events.
+
+    Recommendations and simulations are intentionally absent.  Inferences are
+    eligible only when explicitly marked ``confirmed``/``confirmed_pattern``;
+    generated active inferences therefore never become a user's timeline by
+    accident.
+    """
+    requested_domain = _timeline_domain(domain) if domain else ""
+    requested_kinds = TIMELINE_KIND_FILTERS.get(str(kind or "").strip().lower())
+    limit = max(1, min(100, int(limit)))
+    events: list[dict[str, object]] = []
+    with db() as connection:
+        fact_rows = [dict(row) for row in connection.execute(
+            """SELECT f.*,d.source_created_at,e.canonical_name AS subject
+               FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+               JOIN documents d ON d.id=f.document_id
+               LEFT JOIN entities e ON e.id=f.subject_entity_id
+               WHERE r.state='confirmed' AND f.personal_relevance='personal'
+                 AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
+                 AND f.status IN ('current','historical','superseded')
+                 AND f.category NOT IN ('reference','scenario','simulation','what_if')
+                 AND f.fact_type NOT IN ('scenario','simulation','what_if')
+               ORDER BY COALESCE(f.effective_at,f.observed_at,f.valid_from,f.occurred_on,d.source_created_at,f.created_at) DESC,f.id DESC
+               LIMIT 600"""
+        )]
+        fact_by_id = {int(row["id"]): row for row in fact_rows}
+        for row in fact_rows:
+            event_kind = _timeline_fact_kind(row)
+            normalized_domain = _timeline_domain(row.get("category"))
+            occurred_at, temporal_source = _timeline_timestamp(
+                None, row.get("occurred_on"), row.get("effective_at"), row.get("valid_from"),
+                None, None, None, None, row.get("source_created_at"), row.get("created_at"),
+            )
+            previous = fact_by_id.get(int(row["supersedes_fact_id"])) if row.get("supersedes_fact_id") else None
+            sensitive = normalized_domain in TIMELINE_SENSITIVE_DOMAINS
+            label = _digest_domain_label(normalized_domain)
+            if event_kind == "fact_changed":
+                title = f"{label}の情報を更新"
+                summary = "情報が更新されました" if sensitive and not include_sensitive else _timeline_fact_value(row, include_sensitive)
+            elif event_kind == "preference_changed":
+                title, summary = "好みを更新", _timeline_fact_value(row, include_sensitive)
+            elif event_kind in {"finance_snapshot", "travel_event", "housing_event", "relationship_event"}:
+                title = f"{label}の記録を更新"
+                summary = f"{label}情報を更新しました" if sensitive and not include_sensitive else _timeline_fact_value(row, include_sensitive)
+            else:
+                title, summary = f"{label}の記録を追加", _timeline_fact_value(row, include_sensitive)
+            events.append(_timeline_event(
+                event_id=f"fact-{row['id']}", event_kind=event_kind, domain=normalized_domain,
+                occurred_at=occurred_at, temporal_source=temporal_source, title=title, summary=summary,
+                sensitive=sensitive, basis=[{"kind": "fact", "id": row["id"]}],
+                action={"type": "open_fact", "id": row["id"]},
+                detail={"currentness": row.get("status"), "previous_value": _timeline_fact_value(previous, include_sensitive) if previous else None,
+                        "new_value": _timeline_fact_value(row, include_sensitive), "source_chunk_id": row.get("source_chunk_id")},
+            ))
+
+        decision_rows = [dict(row) for row in connection.execute(
+            """SELECT * FROM decisions ORDER BY COALESCE(decided_on,created_at) DESC,id DESC LIMIT 400"""
+        )]
+        for row in decision_rows:
+            normalized_domain = _timeline_domain(row.get("domain"))
+            sensitive = normalized_domain in TIMELINE_SENSITIVE_DOMAINS
+            title = _timeline_safe_text(normalized_domain, row.get("title") or row.get("question"), f"{_digest_domain_label(normalized_domain)}の判断", include_sensitive)
+            common = {"domain": normalized_domain, "sensitive": sensitive, "basis": [{"kind": "decision", "id": row["id"]}],
+                      "action": {"type": "open_decision", "id": row["id"]}}
+            created_at, created_source = _timeline_timestamp(None, None, None, None, None, None, None, None, None, row.get("created_at"))
+            events.append(_timeline_event(event_id=f"decision-{row['id']}-created", event_kind="decision_created", occurred_at=created_at,
+                                          temporal_source=created_source, title="判断候補を追加", summary=title, **common))
+            state = str(row.get("decision_state") or "").lower()
+            if state in {"decided", "executed", "result"}:
+                made_at, made_source = _timeline_timestamp(None, None, None, None, row.get("decided_on"), None, None, None, None, row.get("created_at"))
+                events.append(_timeline_event(event_id=f"decision-{row['id']}-made", event_kind="decision_made", occurred_at=made_at,
+                                              temporal_source=made_source, title="判断を決定", summary=title, **common))
+            if str(row.get("result") or "").strip():
+                result_at, result_source = _timeline_timestamp(None, None, None, None, None, None, row.get("outcome_recorded_at"), None, None, row.get("updated_at") or row.get("created_at"))
+                events.append(_timeline_event(event_id=f"decision-{row['id']}-result", event_kind="result_recorded", occurred_at=result_at,
+                                              temporal_source=result_source, title="結果を記録", summary=_timeline_safe_text(normalized_domain, row.get("result"), f"{_digest_domain_label(normalized_domain)}の結果を記録しました", include_sensitive), **common))
+            if str(row.get("later_evaluation") or "").strip():
+                evaluated_at, evaluated_source = _timeline_timestamp(None, None, None, None, None, None, None, row.get("evaluation_recorded_at"), None, row.get("updated_at") or row.get("created_at"))
+                events.append(_timeline_event(event_id=f"decision-{row['id']}-evaluation", event_kind="evaluation_recorded", occurred_at=evaluated_at,
+                                              temporal_source=evaluated_source, title="後日評価を記録", summary=_timeline_safe_text(normalized_domain, row.get("later_evaluation"), f"{_digest_domain_label(normalized_domain)}の振り返りを記録しました", include_sensitive), **common))
+
+        plan_rows = [dict(row) for row in connection.execute("SELECT * FROM plans ORDER BY created_at DESC,id DESC LIMIT 400")]
+        for row in plan_rows:
+            normalized_domain = _timeline_domain(row.get("domain"))
+            sensitive = normalized_domain in TIMELINE_SENSITIVE_DOMAINS
+            basis = [{"kind": "plan", "id": row["id"]}]
+            related = [{"kind": "decision", "id": row["decision_id"]}] if row.get("decision_id") else []
+            common = {"domain": normalized_domain, "sensitive": sensitive, "basis": basis, "related": related,
+                      "action": {"type": "open_decision", "id": row["decision_id"]} if row.get("decision_id") else None}
+            created_at, created_source = _timeline_timestamp(None, None, None, None, None, None, None, None, None, row.get("created_at"))
+            plan_title = _timeline_safe_text(normalized_domain, row.get("title"), f"{_digest_domain_label(normalized_domain)}の計画", include_sensitive)
+            events.append(_timeline_event(event_id=f"plan-{row['id']}-created", event_kind="plan_created", occurred_at=created_at,
+                                          temporal_source=created_source, title="計画を作成", summary=plan_title, **common))
+            if str(row.get("updated_at") or "") != str(row.get("created_at") or ""):
+                updated_at, updated_source = _timeline_timestamp(None, None, None, None, None, None, None, None, None, row.get("updated_at"))
+                events.append(_timeline_event(event_id=f"plan-{row['id']}-changed", event_kind="plan_changed", occurred_at=updated_at,
+                                              temporal_source=updated_source, title="計画を更新", summary=plan_title, **common))
+
+        execution_rows = [dict(row) for row in connection.execute(
+            """SELECT e.*,d.domain,d.title FROM execution_events e JOIN decisions d ON d.id=e.decision_id
+               ORDER BY COALESCE(e.occurred_at,e.created_at) DESC,e.id DESC LIMIT 500"""
+        )]
+        for row in execution_rows:
+            normalized_domain = _timeline_domain(row.get("domain"))
+            occurred_at, temporal_source = _timeline_timestamp(row.get("occurred_at"), None, None, None, None, row.get("occurred_at"), None, None, None, row.get("created_at"))
+            events.append(_timeline_event(
+                event_id=f"execution-{row['id']}", event_kind="executed", domain=normalized_domain,
+                occurred_at=occurred_at, temporal_source=temporal_source, title="実行を記録",
+                summary=_timeline_safe_text(normalized_domain, row.get("summary") or row.get("title"), f"{_digest_domain_label(normalized_domain)}を実行しました", include_sensitive),
+                sensitive=normalized_domain in TIMELINE_SENSITIVE_DOMAINS,
+                basis=[{"kind": "execution", "id": row["id"]}, {"kind": "decision", "id": row["decision_id"]}],
+                related=[{"kind": "decision", "id": row["decision_id"]}], action={"type": "open_decision", "id": row["decision_id"]},
+            ))
+
+        inference_rows = [dict(row) for row in connection.execute(
+            """SELECT * FROM personal_inferences
+               WHERE status='active' AND inference_type IN ('confirmed','confirmed_pattern')
+               ORDER BY last_evaluated_at DESC,id DESC LIMIT 120"""
+        )]
+        for row in inference_rows:
+            normalized_domain = _timeline_domain(row.get("domain"))
+            basis = [{"kind": "inference", "id": row["id"]}]
+            try:
+                basis.extend({"kind": "fact", "id": int(item)} for item in json.loads(row.get("source_fact_ids_json") or "[]")[:8])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            occurred_at, temporal_source = _timeline_timestamp(None, None, None, None, None, None, None, None, row.get("last_evaluated_at"), row.get("created_at"))
+            events.append(_timeline_event(event_id=f"inference-{row['id']}", event_kind="inference_confirmed", domain=normalized_domain,
+                                          occurred_at=occurred_at, temporal_source=temporal_source, title="確認済みの傾向を更新",
+                                          summary=_timeline_safe_text(normalized_domain, row.get("statement"), f"{_digest_domain_label(normalized_domain)}の確認済み傾向", include_sensitive),
+                                          sensitive=normalized_domain in TIMELINE_SENSITIVE_DOMAINS, basis=basis))
+
+    # One source event can be projected only once.  Fact-currentness rebuilds
+    # and import retries otherwise easily create visually identical entries.
+    unique: dict[tuple[str, str, str], dict[str, object]] = {}
+    for event in events:
+        dedupe_key = (str(event["id"]), str(event["event_kind"]), str(event.get("occurred_at") or ""))
+        unique.setdefault(dedupe_key, event)
+    events = list(unique.values())
+    if requested_domain:
+        events = [event for event in events if event["domain"] == requested_domain]
+    if requested_kinds is not None:
+        events = [event for event in events if event["event_kind"] in requested_kinds]
+    if from_date:
+        events = [event for event in events if event.get("occurred_at") and str(event["occurred_at"])[:10] >= from_date]
+    if to_date:
+        events = [event for event in events if event.get("occurred_at") and str(event["occurred_at"])[:10] <= to_date]
+    events.sort(key=lambda item: (str(item.get("occurred_at") or ""), str(item["id"])), reverse=True)
+    cursor_value = _timeline_cursor_decode(cursor)
+    if cursor_value:
+        events = [event for event in events if (str(event.get("occurred_at") or ""), str(event["id"])) < cursor_value]
+    page = events[:limit]
+    next_cursor = _timeline_cursor_encode(page[-1]) if len(events) > limit and page else None
+    return {
+        "events": page, "next_cursor": next_cursor,
+        "filters": {"domains": sorted({event["domain"] for event in events}), "kinds": sorted({event["event_kind"] for event in events})},
+    }
+
+
+def timeline_event_detail(event_id: str, include_sensitive: bool = False) -> dict[str, object] | None:
+    """Return one projected event.  No source row is ever mutated."""
+    for event in timeline_projection(limit=100, include_sensitive=include_sensitive)["events"]:
+        if event["id"] == event_id:
+            return event
+    return None
+
+
 def configured_access_password() -> str:
     return os.environ.get("PERSONAL_OS_ACCESS_PASSWORD", "")
 
@@ -7716,6 +8000,27 @@ class Handler(BaseHTTPRequestHandler):
                        ORDER BY f.category, COALESCE(f.valid_from, f.created_at) DESC LIMIT 100"""
                 )]
             return self.send_json(rows)
+        if path == "/api/timeline":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                limit = max(1, min(100, int(query.get("limit", [30])[0])))
+            except ValueError:
+                limit = 30
+            return self.send_json(timeline_projection(
+                domain=query.get("domain", [None])[0] or None,
+                kind=query.get("kind", [None])[0] or None,
+                from_date=query.get("from", [None])[0] or None,
+                to_date=query.get("to", [None])[0] or None,
+                limit=limit, cursor=query.get("cursor", [None])[0] or None,
+                include_sensitive=query.get("include_sensitive", ["false"])[0].lower() == "true",
+            ))
+        timeline_match = re.fullmatch(r"/api/timeline/([A-Za-z0-9_-]+)", path)
+        if timeline_match:
+            query = parse_qs(urlparse(self.path).query)
+            detail = timeline_event_detail(
+                timeline_match.group(1), query.get("include_sensitive", ["false"])[0].lower() == "true"
+            )
+            return self.send_json(detail or {"error": "Not found"}, HTTPStatus.OK if detail else HTTPStatus.NOT_FOUND)
         if path == "/api/benchmarks":
             query = parse_qs(urlparse(self.path).query)
             return self.send_json(benchmark_projection(query.get("metric_key", [None])[0]))

@@ -20,6 +20,10 @@
 
 ![Mobile 人口ベンチマーク](screenshots/ux-phase5/mobile-390-benchmark.png)
 
+![Desktop 自分の変化](screenshots/ux-phase5/desktop-1280-timeline.png)
+
+![Mobile 自分の変化の詳細](screenshots/ux-phase5/mobile-390-timeline-detail.png)
+
 確認した点は、Primary Actionの初期表示、Bottom Navigationとの非重複、44px以上の操作対象、SheetのEsc／Focus復帰／背景スクロール固定、横Overflowなし、根拠の折りたたみ、機微ラベルの既定マスクである。
 
 ## Desktop
@@ -34,6 +38,8 @@
 
 ダイジェストの相談候補は、タップ後に相談画面へ遷移して文面だけを入力する。回答送信は行われず、入力は本人が編集できることをBrowser E2Eで確認した。
 
+Timelineでは、意味的な日付、領域、日本語の種類ラベルを左から追えるようにし、線やマーカーを本文より強くしない。Mobileの詳細は共通Sheetに収め、閉じた後は元CardにFocusが戻る。資産・人間関係・健康は既定で本文を伏せ、試算・提案・未確認推論は表示しない。
+
 ## 修正した点
 
 - 記録は送信時に「保存しています…」と表示し、実APIの2xx応答後だけ成功表示とDraft削除を行うようにした。
@@ -41,7 +47,7 @@
 - SheetのEsc、Backdrop、Focus Trap、Focus復帰、背景スクロール固定を共通化した。
 - Domain画面のCurrent/Recent/Decisions/History/Evidence構造とEmpty Stateを共通Rendererへ統一した。
 
-公開レビュー用の22画面は `screenshots/ux-phase5/manifest.json` に登録する。E2E生成直後はすべて `reviewed=false` とし、Synthetic Dataであることと `contains_sensitive_data=false` を確認した目視承認後だけ、ハッシュ・承認者・承認日時付きで公開前検査を通過する。
+公開レビュー用の27画面は `screenshots/ux-phase5/manifest.json` に登録する。E2E生成直後はすべて `reviewed=false` とし、Synthetic Dataであることと `contains_sensitive_data=false` を確認した目視承認後だけ、ハッシュ・承認者・承認日時付きで公開前検査を通過する。
 
 ## 残課題
 

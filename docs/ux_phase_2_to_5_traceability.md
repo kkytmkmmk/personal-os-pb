@@ -27,4 +27,14 @@
 | 最近の変化・思い出しておくこと | `memory_changes` とEvidence付きconfirmed Factを最大3/2件に制限 | Backend unit test | Done |
 | 相談候補は自動送信しない | `data-digest-prompt` が相談入力欄だけをprefill | Mobile Browser E2E | Done |
 | Empty State | `today_digest()` の空Projectionと記録導線 | Backend unit test / Browser E2E | Done |
+
+## Phase B-2: 自分の変化 Timeline
+
+| 要件 | 実装 | 検証 | 状態 |
+|---|---|---|---|
+| 読み取り専用の共通Timeline Event | `timeline_projection()` / `GET /api/timeline` | `test_change_timeline.py` | Done |
+| 意味的時刻・Fact更新・Decision lifecycle | Factの有効日時、Plan、Decision、Execution、結果、評価をProjection | Timeline unit test | Done |
+| Privacyと推論境界 | finance / relationship / healthを既定マスク、未確認Inference・Recommendation・Simulationを除外 | Timeline unit test | Done |
+| Explore UI・Filter・Cursor・Detail | `static/visualization.js` / `explore-timeline` / shared Sheet | `test_timeline_ui.py` / Browser E2E | Done |
+| 今日からの導線と今と比べる | `daily-ux.js`、比較Promptの下書きのみ | Browser E2E | Done |
 - 相談の不足情報は最大3件で、Factを自動作成しない。

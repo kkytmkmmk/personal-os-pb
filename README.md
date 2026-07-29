@@ -14,6 +14,7 @@ See [UX Phase 5 Visual Review](docs/ux_phase5_visual_review.md) for the review c
 See [the Phase 5 final remediation record](docs/ux_phase5_final_remediation.md) for synthetic-data safeguards, explicit screenshot approval, and reproducible E2E commands.
 See [the Phase A stability record](docs/phase_a_stability.md) for isolated browser journeys, timeout handling, Chromium verification, and benchmark comparison safeguards.
 See [the daily digest record](docs/daily_digest.md) for the evidence-backed Today overview and its non-mutating consultation entry points.
+See [the personal change Timeline guide](docs/change_timeline.md) for the read-only, semantic history projection in Explore.
 
 ## Rebuild additions (2026-07-26)
 
@@ -33,6 +34,7 @@ The current Done/Partial/Not implemented status is in `docs/requirements_traceab
 
 - Population benchmarks are a separate local reference-data layer: `benchmark_sources`, `benchmark_series`, `benchmark_observations`, and `benchmark_refresh_runs`. `POST /api/benchmarks/import` accepts reviewed reference data with a source URL, definition, scope, and period. It never transmits Personal OS facts to a source and never alters `facts`.
 - **Personal Space** is a secondary, deterministic, bounded Canvas exploration view for confirmed Facts and Decisions. Health, relationship, and finance labels are masked by default; revealing them is an explicit local UI action. It is not primary navigation and does not replace search.
+- **自分の変化** is a read-only Timeline in Explore. It projects confirmed personal Facts and the Decision lifecycle by semantic event time, never by import order. Simulations, recommendations and unconfirmed inferences are excluded; finance, health and relationship summaries are masked by default.
 
 ## Public repository release
 
