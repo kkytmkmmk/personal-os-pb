@@ -3039,13 +3039,9 @@ def migrate_current_truth() -> None:
 
 BENCHMARK_STAT_TYPES = {"mean", "median", "percentile", "proportion", "count", "distribution", "index"}
 BENCHMARK_COMPATIBILITY = {"exact", "comparable", "reference_only", "incompatible"}
-# A comparison defaults to the exact metric key.  Aliases must never bridge
-# total assets and financial assets (or individual and household measures).
+# A comparison defaults to the exact metric key. Total assets and financial
+# assets (or individual and household measures) are never interchangeable.
 # Add a new key only after its full definition/scope contract is reviewed.
-BENCHMARK_FACT_KEY_ALIASES: dict[str, tuple[str, ...]] = {}
-# Subject scope describes a Personal OS fact (self, asset, person, ...).  It is
-# intentionally not a proxy for a statistic's population unit.  A comparison
-# is only numeric when both sides carry this explicit contract.
 BENCHMARK_METRIC_CONTRACTS: dict[str, dict[str, object]] = {
     "finance.total_assets": {"personal_fact_keys": ("finance.total_assets", "finance.asset_balance.total_assets"), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
     "finance.financial_assets": {"personal_fact_keys": ("finance.financial_assets", "finance.asset_balance.financial_assets"), "canonical_unit": "JPY", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current"},
@@ -3094,6 +3090,11 @@ def resolve_personal_metric_contract(fact_key: str | None) -> dict[str, object] 
         if key in tuple(definition.get("personal_fact_keys", ())):
             return benchmark_metric_contract(metric_key, definition)
     return None
+
+
+def embedded_contract_matches_registry(embedded: dict[str, object], registry: dict[str, object]) -> bool:
+    """Check saved diagnostic metadata without granting it any authority."""
+    return all(str(embedded.get(field, "")) == str(registry.get(field, "")) for field in BENCHMARK_CONTRACT_FIELDS)
 
 
 def normalize_benchmark_value(value: object, unit: object, canonical_unit: object) -> tuple[float | None, str | None]:
@@ -3213,82 +3214,6 @@ def migrate_visualization_benchmark() -> None:
         )
 
 
-def _legacy_benchmark_projection_unsafe(metric_key: str | None = None) -> dict[str, object]:
-    """Return only local reference data; no personal data leaves this process."""
-    with db() as connection:
-        sql = """SELECT s.id,s.metric_key,s.metric_name,s.domain,s.unit,s.statistic_type,s.definition,s.population_scope,
-                         s.segment_definition_json,s.geography,s.frequency,s.version,src.source_name,src.publisher,src.source_url,
-                         src.methodology,src.last_successful_at,src.is_demo,src.import_channel
-                  FROM benchmark_series s JOIN benchmark_sources src ON src.id=s.source_id WHERE s.active=1"""
-        params: list[object] = []
-        if metric_key:
-            sql += " AND s.metric_key=?"; params.append(metric_key)
-        series = [dict(row) for row in connection.execute(sql + " ORDER BY s.domain,s.metric_name", params)]
-        for item in series:
-            item["observations"] = [dict(row) for row in connection.execute(
-                "SELECT * FROM benchmark_observations WHERE series_id=? ORDER BY reference_period DESC,id DESC LIMIT 24", (item["id"],)
-            )]
-            keys = BENCHMARK_FACT_KEY_ALIASES.get(item["metric_key"], (item["metric_key"],))
-            placeholders = ",".join("?" for _ in keys)
-            fact = connection.execute(
-                f"""SELECT f.id,f.fact_key,f.value_json,f.summary,f.valid_from,f.created_at,f.subject_scope
-                    FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
-                    WHERE f.fact_key IN ({placeholders}) AND f.status='current' AND r.state='confirmed'
-                      AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
-                    ORDER BY COALESCE(f.valid_from,f.created_at) DESC,f.id DESC LIMIT 1""", keys,
-            ).fetchone()
-            item["personal"] = None
-            item["compatibility"] = "reference_only"
-            item["comparison"] = {"compatibility": "reference_only", "reasons": ["No compatible confirmed current Fact"]}
-            if fact:
-                try:
-                    fact_value = json.loads(fact["value_json"] or "{}")
-                    amount = fact_value.get("amount")
-                    amount = float(amount) if amount is not None else None
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    amount = None
-                    fact_value = {}
-                currency = str(fact_value.get("currency") or "")
-                details = fact_value.get("details") if isinstance(fact_value.get("details"), dict) else {}
-                fact_scope = str(details.get("subject_scope") or fact["subject_scope"] or "unknown").lower()
-                try:
-                    series_details = json.loads(item["segment_definition_json"] or "{}")
-                except json.JSONDecodeError:
-                    series_details = {}
-                series_scope = str(series_details.get("subject_scope") or "unknown").lower()
-                # Currency/unit equality is required for an automatic numeric
-                # comparison.  Other definitions remain visible as reference.
-                unit_matches = bool(amount is not None and (
-                    item["unit"] == currency or (currency == "JPY" and item["unit"] in {"JPY", "円"})
-                ))
-                if fact_scope == "unknown" or series_scope == "unknown":
-                    item["compatibility"] = "reference_only"
-                    compatibility_reason = "Subject scope is not explicitly verified"
-                elif fact_scope != series_scope:
-                    item["compatibility"] = "incompatible"
-                    compatibility_reason = f"Subject scope differs: {fact_scope} vs {series_scope}"
-                elif unit_matches:
-                    item["compatibility"] = "exact"
-                    compatibility_reason = "Metric key, unit, and subject scope match"
-                else:
-                    item["compatibility"] = "incompatible"
-                    compatibility_reason = "Unit is not compatible"
-                item["personal"] = {"fact_id": fact["id"], "fact_key": fact["fact_key"], "value": amount,
-                                    "unit": currency, "summary": fact["summary"], "valid_from": fact["valid_from"]}
-                latest_value = item["observations"][0]["value"] if item["observations"] else None
-                comparison = {"compatibility": item["compatibility"], "personal_value": amount, "reference_value": latest_value,
-                              "unit": item["unit"], "reasons": []}
-                if item["compatibility"] == "exact" and amount is not None and latest_value is not None:
-                    reference_value = float(latest_value)
-                    comparison.update({"absolute_difference": amount - reference_value,
-                                       "ratio": amount / reference_value if reference_value else None,
-                                       "percentage_difference": (amount - reference_value) / reference_value if reference_value else None})
-                else:
-                    comparison["reasons"] = [compatibility_reason]
-                item["comparison"] = comparison
-    return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES), "privacy": "reference data stays local; personal facts are never sent to sources"}
-
-
 def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
     """Project local benchmark data with an explicit, conservative comparison contract."""
     with db() as connection:
@@ -3334,12 +3259,21 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
             details = fact_value.get("details") if isinstance(fact_value.get("details"), dict) else {}
             embedded_contract = _json_object(details.get("benchmark_contract"))
             registry_contract = resolve_personal_metric_contract(str(fact["fact_key"]))
-            fact_contract = embedded_contract or (registry_contract or {})
+            # A Fact can carry old or model-produced contract metadata. It is
+            # useful for audits, but cannot authorize a numeric comparison.
+            # Only the reviewed Registry is allowed to define the Fact side.
+            fact_contract = dict(registry_contract or {})
             amount = fact_value.get("amount")
             unit = str(fact_value.get("currency") or fact_value.get("unit") or "")
             reasons: list[dict[str, object]] = []
             if not fact_contract:
                 reasons.append({"code": "personal_contract_missing", "subject_scope": fact["subject_scope"] or "unknown"})
+            embedded_matches_registry = (
+                embedded_contract_matches_registry(embedded_contract, fact_contract)
+                if embedded_contract and fact_contract else None
+            )
+            if embedded_matches_registry is False:
+                reasons.append({"code": "embedded_contract_conflicts_with_registry"})
             for field in ("metric_key", "statistical_unit", "measurement_kind", "time_basis"):
                 expected, actual = contract.get(field), fact_contract.get(field)
                 if expected and actual and str(expected) != str(actual):
@@ -3354,14 +3288,17 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
                 reasons.append({"code": "personal_unit_unverified", "personal": unit or None, "reference": canonical_unit})
             if latest.get("value") is not None and reference_value is None:
                 reasons.append({"code": "reference_unit_unverified", "reference": item["unit"], "canonical": canonical_unit})
-            incompatible = any(str(reason["code"]).endswith("_mismatch") for reason in reasons)
-            compatibility = "incompatible" if incompatible else "reference_only" if reasons else (
+            blocking_reasons = [reason for reason in reasons if reason.get("code") != "embedded_contract_conflicts_with_registry"]
+            incompatible = any(str(reason["code"]).endswith("_mismatch") for reason in blocking_reasons)
+            compatibility = "incompatible" if incompatible else "reference_only" if blocking_reasons else (
                 "exact" if unit.lower() == str(item["unit"]).lower() else "comparable"
             )
             item["compatibility"] = compatibility
             item["personal"] = {"fact_id": fact["id"], "fact_key": fact["fact_key"], "value": amount, "unit": unit,
                                 "summary": fact["summary"], "valid_from": fact["valid_from"], "contract": fact_contract,
-                                "contract_source": "embedded" if embedded_contract else "registry" if registry_contract else "none"}
+                                "contract_source": "registry" if registry_contract else "none",
+                                "embedded_contract_present": bool(embedded_contract),
+                                "embedded_contract_matches_registry": embedded_matches_registry}
             comparison: dict[str, object] = {"compatibility": compatibility, "personal_value": personal_value,
                                              "reference_value": reference_value, "unit": canonical_unit, "reasons": reasons}
             if compatibility in {"exact", "comparable"} and personal_value is not None and reference_value is not None:

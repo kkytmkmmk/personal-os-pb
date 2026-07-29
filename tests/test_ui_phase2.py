@@ -51,7 +51,12 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("wireGestures", visualization)
         self.assertIn('id="space-reset"', self.index)
         self.assertNotIn("percentile_hint || 50", visualization)
-        self.assertIn("reasonText", visualization)
+        self.assertIn("nodeKindLabels", visualization)
+        self.assertIn("temporalLabels", visualization)
+        self.assertIn("benchmarkReasonLabels", visualization)
+        self.assertNotIn("reasonText", visualization)
+        self.assertNotIn("現在Fact", visualization)
+        self.assertNotIn("個人Fact", visualization)
 
     def test_daily_navigation_and_capture_are_static_and_single_purpose(self):
         self.assertIn('src="/daily-ux.js"', self.index)

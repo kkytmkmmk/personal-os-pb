@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import ast
 from unittest import mock
 from contextlib import contextmanager
 from pathlib import Path
@@ -237,6 +238,56 @@ class VisualizationBenchmarkTests(unittest.TestCase):
                 self.assertEqual(contract["time_basis"], time_basis)
         self.assertTrue(all("personal_fact_keys" in definition for definition in app.BENCHMARK_METRIC_CONTRACTS.values()))
         self.assertTrue(all("fact_keys" not in definition for definition in app.BENCHMARK_METRIC_CONTRACTS.values()))
+
+    def test_registry_remains_authoritative_when_embedded_contract_is_stale(self):
+        with isolated_personal_os():
+            timestamp = app.now()
+            with app.db() as connection:
+                document_id = connection.execute("INSERT INTO documents(title,source,source_created_at,ingested_at,created_at,updated_at) VALUES(?,?,?,?,?,?)", ("source", "manual", timestamp, timestamp, timestamp, timestamp)).lastrowid
+                fact_id = connection.execute(
+                    """INSERT INTO facts(document_id,category,fact_type,fact_key,value_json,summary,confidence,extractor,created_at,status,retrieval_eligibility,truth_confidence,personal_relevance)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (document_id, "finance", "asset_balance", "finance.total_assets", '{"amount": 1000000, "currency": "JPY", "details": {"benchmark_contract": {"metric_key": "finance.total_assets", "statistical_unit": "household", "measurement_kind": "flow", "time_basis": "annual", "canonical_unit": "USD"}}}', "assets", .99, "test", timestamp, "current", "eligible", .99, "personal"),
+                ).lastrowid
+                connection.execute("INSERT INTO fact_reviews(fact_id,state,reviewed_at,created_at) VALUES(?,?,?,?)", (fact_id, "confirmed", timestamp, timestamp))
+            app.import_benchmark_reference({"source":{"source_name":"R","publisher":"P","source_url":"https://example.test/r"},"series":{"metric_key":"finance.total_assets","metric_name":"Assets","domain":"finance","unit":"JPY","statistic_type":"median","definition":"assets","population_scope":"individuals","segment_definition":{}},"observations":[{"reference_period":"2025","value":500000}]})
+            series = app.benchmark_projection("finance.total_assets")["series"][0]
+            self.assertEqual(series["compatibility"], "exact")
+            self.assertEqual(series["comparison"]["absolute_difference"], 500000.0)
+            self.assertEqual(series["personal"]["contract_source"], "registry")
+            self.assertTrue(series["personal"]["embedded_contract_present"])
+            self.assertFalse(series["personal"]["embedded_contract_matches_registry"])
+            self.assertIn({"code": "embedded_contract_conflicts_with_registry"}, series["comparison"]["reasons"])
+
+    def test_unknown_personal_fact_cannot_self_authorize_with_embedded_contract(self):
+        with isolated_personal_os():
+            timestamp = app.now()
+            with app.db() as connection:
+                document_id = connection.execute("INSERT INTO documents(title,source,source_created_at,ingested_at,created_at,updated_at) VALUES(?,?,?,?,?,?)", ("source", "manual", timestamp, timestamp, timestamp, timestamp)).lastrowid
+                fact_id = connection.execute(
+                    """INSERT INTO facts(document_id,category,fact_type,fact_key,value_json,summary,confidence,extractor,created_at,status,retrieval_eligibility,truth_confidence,personal_relevance)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (document_id, "other", "status", "unknown.metric", '{"amount": 12, "unit": "JPY", "details": {"benchmark_contract": {"metric_key": "unknown.metric", "statistical_unit": "individual", "measurement_kind": "balance", "time_basis": "current", "canonical_unit": "JPY"}}}', "unknown", .99, "test", timestamp, "current", "eligible", .99, "personal"),
+                ).lastrowid
+                connection.execute("INSERT INTO fact_reviews(fact_id,state,reviewed_at,created_at) VALUES(?,?,?,?)", (fact_id, "confirmed", timestamp, timestamp))
+            app.import_benchmark_reference({"source":{"source_name":"R","publisher":"P","source_url":"https://example.test/r"},"series":{"metric_key":"unknown.metric","metric_name":"Unknown","domain":"other","unit":"JPY","statistic_type":"median","definition":"unknown","population_scope":"individuals","segment_definition":{},"metric_contract":{"metric_key":"unknown.metric","statistical_unit":"individual","measurement_kind":"balance","time_basis":"current","canonical_unit":"JPY"}},"observations":[{"reference_period":"2025","value":10}]})
+            series = app.benchmark_projection("unknown.metric")["series"][0]
+            self.assertEqual(series["compatibility"], "reference_only")
+            self.assertEqual(series["personal"]["contract_source"], "none")
+            self.assertNotIn("absolute_difference", series["comparison"])
+            self.assertNotIn("ratio", series["comparison"])
+            self.assertNotIn("percentile_band", series["comparison"])
+            self.assertIn({"code": "personal_contract_missing", "subject_scope": "unknown"}, series["comparison"]["reasons"])
+
+    def test_benchmark_projection_has_one_safe_definition(self):
+        tree = ast.parse((Path(app.__file__).read_text(encoding="utf-8")))
+        names = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+        self.assertEqual(names.count("benchmark_projection"), 1)
+        self.assertNotIn("_legacy_benchmark_projection_unsafe", names)
+        source = Path(app.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("Subject scope differs", source)
+        self.assertNotIn("Metric key, unit, and subject scope match", source)
+        self.assertNotIn("No compatible confirmed current Fact", source)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,14 @@ Backend は `comparison_group_key` を生成し、`metric_key` だけではな�
 
 通常UIでは compatibility、統計種別、出典種別、比較不能理由を日本語化する。比較不能なら数値差や分布上の位置を作らず、比較条件を説明する。
 
+`BENCHMARK_METRIC_CONTRACTS` は比較に使う本人側Contractの唯一のAuthorityである。Factに保存された
+`details.benchmark_contract` は旧データの診断用metadataに限定し、比較の可否・単位正規化・数値差には使用しない。
+Registry未登録のFactは、metadataを持っていても常に `reference_only` として扱う。両者が不一致なら
+`embedded_contract_conflicts_with_registry` を監査情報として返すが、Registryによる比較を止めたり上書きしたりしない。
+
+Projection実装は `benchmark_projection()` 一つだけである。過去の subject scope や文字列理由に依存するProjectionは削除し、
+ASTテストで旧関数が再導入されないことを確認する。
+
 ## Service Worker
 
 Cache name は `personal-os-v3-phase5-final-1`。Activate 時に旧 cache を削除し、`app.js`、`daily-ux.js`、`visualization.js`、`styles.css`、`manifest.webmanifest`、`icon.svg` を新しい shell として取得する。
