@@ -364,7 +364,13 @@ def verify_daily_digest(page: Any, directory: Path, manifest: list[dict[str, Any
             raise E2EFailure("daily digest consultation prompt was sent automatically")
     else:
         page.locator("#today-digest [data-digest-decision]").first.click()
-        page.locator("#decisions").wait_for(state="visible")
+        # A result/evaluation action now opens the decision replay directly;
+        # other lifecycle actions still lead to the decision list.
+        try:
+            page.locator("#decision-replay-sheet").wait_for(state="visible", timeout=1200)
+            page.keyboard.press("Escape")
+        except Exception:
+            page.locator("#decisions").wait_for(state="visible", timeout=4000)
 
 
 def verify_empty_daily_digest(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int]) -> None:
@@ -429,9 +435,75 @@ def verify_timeline(page: Any, directory: Path, manifest: list[dict[str, Any]], 
         assert_layout(page, mobile=True)
 
 
+def verify_decision_replay(page: Any, directory: Path, manifest: list[dict[str, Any]], prefix: str,
+                           viewport: tuple[int, int], *, mobile: bool) -> None:
+    """Exercise the real read-only replay API from an actual decision card."""
+    route(page, "decisions"); wait_decisions(page)
+    decision_id = page.evaluate("""async () => {
+      const rows = await (await fetch('/api/decisions')).json();
+      return rows.find(row => row.title === 'Sample weekend decision')?.id || 0;
+    }""")
+    if not decision_id:
+        raise E2EFailure("synthetic replay decision is missing")
+    opener = page.locator(f"[data-decision-replay='{decision_id}']")
+    opener.wait_for(state="visible", timeout=5000)
+    with page.expect_response(lambda response: response.url.endswith(f"/api/decisions/{decision_id}/replay") and response.request.method == "GET", timeout=8000):
+        opener.click()
+    page.locator("#decision-replay-sheet").wait_for(state="visible")
+    page.locator("#decision-replay-content .replay-stage").first.wait_for(state="visible", timeout=5000)
+    if page.locator("#decision-replay-content .replay-stage").count() != 10:
+        raise E2EFailure("decision replay did not render every lifecycle stage")
+    if page.locator("#decision-replay-content").inner_text().find("Keep transfer time short.") < 0:
+        raise E2EFailure("replay did not keep the consultation recommendation visible as context")
+    screenshot(page, directory, manifest, f"{prefix}-decision-replay", "#decisions", "decision-replay", viewport)
+    evidence = page.locator("#decision-replay-content .replay-evidence summary").first
+    if evidence.count() > 0:
+        evidence.click(); page.wait_for_timeout(80)
+    screenshot(page, directory, manifest, f"{prefix}-decision-replay-evidence", "#decisions", "decision-replay-evidence", viewport)
+    page.keyboard.press("Escape")
+    page.locator("#decision-replay-sheet").wait_for(state="hidden")
+    if page.evaluate("() => document.activeElement?.dataset?.decisionReplay") != str(decision_id):
+        raise E2EFailure("decision replay sheet did not restore focus to its opener")
+    if mobile:
+        missing_id = page.evaluate("""async () => {
+          const rows = await (await fetch('/api/decisions')).json();
+          return rows.find(row => row.decision_state === 'executed')?.id || 0;
+        }""")
+        missing = page.locator(f"[data-decision-replay='{missing_id}']")
+        missing.click(); page.locator("#decision-replay-sheet").wait_for(state="visible")
+        page.locator("#decision-replay-content [data-replay-action='record_result']").wait_for(state="visible", timeout=5000)
+        page.locator("#decision-replay-content [data-replay-action='record_result']").scroll_into_view_if_needed()
+        page.wait_for_timeout(80)
+        if page.locator("#decision-replay-content [data-replay-action='record_result']").count() == 0:
+            raise E2EFailure("replay did not show an explicit action for a missing result")
+        screenshot(page, directory, manifest, f"{prefix}-decision-replay-missing-stage", "#decisions", "decision-replay-missing-stage", viewport)
+        page.keyboard.press("Escape")
+        assert_layout(page, mobile=True)
+
+
+def verify_feedback(page: Any, directory: Path, manifest: list[dict[str, Any]], prefix: str,
+                    viewport: tuple[int, int]) -> None:
+    route(page, "settings")
+    feedback = page.locator("#production-readiness [data-action='ux-feedback']")
+    feedback.wait_for(state="visible", timeout=5000)
+    feedback.click(); page.locator("#ux-feedback-sheet").wait_for(state="visible")
+    page.locator("#ux-feedback-body").fill("Synthetic feedback: the replay path is easy to find.")
+    screenshot(page, directory, manifest, f"{prefix}-ux-feedback", "#settings", "ux-feedback", viewport)
+    with page.expect_response(lambda response: response.url.endswith('/api/ux-feedback') and response.request.method == 'POST', timeout=8000) as saved:
+        page.locator("#ux-feedback-form button[type='submit']").click()
+    if not saved.value.ok:
+        raise E2EFailure(f"feedback did not save locally: {saved.value.status}")
+    page.wait_for_function("() => document.querySelector('#ux-feedback-list')?.textContent.includes('Synthetic feedback')", timeout=5000)
+    page.keyboard.press("Escape")
+    page.locator("#ux-feedback-sheet").wait_for(state="hidden", timeout=3000)
+
+
 def verify_empty_timeline(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int]) -> None:
     # Do not leave the preceding focused-domain filter on the empty-state
     # evidence; this is an empty personal timeline, not an empty sub-domain.
+    route(page, "explore")
+    page.locator("[data-explore-mode='timeline']").click()
+    page.locator("#timeline-domain").wait_for(state="visible", timeout=5000)
     page.locator("#timeline-domain").select_option("")
     page.wait_for_timeout(80)
     with sqlite3.connect(database) as connection:
@@ -469,6 +541,7 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
     if save.count() > 0:
         save.click(); page.wait_for_timeout(160)
     route(page, "decisions"); wait_decisions(page); screenshot(page, directory, manifest, f"{prefix}-decisions", "#decisions", "default", viewport)
+    verify_decision_replay(page, directory, manifest, prefix, viewport, mobile=False)
     outcome = page.locator("[data-decision-outcome]").first
     if outcome.count() > 0:
         outcome.click(); page.locator("#decision-outcome-sheet").wait_for(state="visible")
@@ -495,6 +568,9 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
     page.keyboard.press("Escape")
     verify_timeline(page, directory, manifest, prefix, viewport, mobile=False)
     route(page, "settings"); screenshot(page, directory, manifest, f"{prefix}-admin", "#settings", "default", viewport)
+    if viewport == (1280, 720):
+        screenshot(page, directory, manifest, f"{prefix}-production-readiness", "#settings", "production-readiness", viewport)
+        verify_feedback(page, directory, manifest, prefix, viewport)
     route(page, "home")
     page.route("**/api/ingest", lambda request: request.fulfill(status=500, content_type="application/json", body='{"error":"Synthetic validation error"}'))
     page.locator("#record-text").fill("Synthetic failure state")
@@ -526,6 +602,10 @@ def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], v
     if details.count() > 0: details.click()
     screenshot(page, directory, manifest, f"{prefix}-chat-evidence", "#chat", "evidence-open", viewport)
     route(page, "decisions"); wait_decisions(page); screenshot(page, directory, manifest, f"{prefix}-decisions", "#decisions", "default", viewport)
+    # The primary mobile journey intentionally mutates an executed Decision
+    # while checking result/evaluation persistence.  The missing-result
+    # Replay evidence therefore belongs to the fresh 390px journey only.
+    verify_decision_replay(page, directory, manifest, prefix, viewport, mobile=viewport == (390, 844))
     outcome = page.locator("[data-decision-outcome]").first
     if outcome.count() > 0:
         outcome.click(); page.locator("#decision-outcome-text").fill("Synthetic draft outcome")
@@ -572,10 +652,12 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
         "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
         "desktop-1280-today-digest.png",
         "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
+        "desktop-1280-decision-replay.png", "desktop-1280-decision-replay-evidence.png", "desktop-1280-ux-feedback.png", "desktop-1280-production-readiness.png",
         "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png", "desktop-1280-timeline.png", "desktop-1280-timeline-detail.png",
         "mobile-390-today.png", "mobile-390-memory.png", "mobile-390-memory-image.png",
         "mobile-390-today-digest.png",
         "mobile-390-chat-result.png", "mobile-390-decisions.png", "mobile-390-decision-result-sheet.png",
+        "mobile-390-decision-replay.png", "mobile-390-decision-replay-missing-stage.png",
         "mobile-390-more-sheet.png", "mobile-390-explore-space.png", "mobile-390-benchmark.png", "mobile-390-timeline.png", "mobile-390-timeline-detail.png", "mobile-390-timeline-empty.png",
         "desktop-1440-today.png", "mobile-375-today.png",
     }
@@ -673,8 +755,9 @@ def main() -> int:
                     page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
                     if mobile: mobile_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))
                     else: desktop_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (1280, 720))
-                if args.viewport_set == "primary":
+                if args.viewport_set != "secondary":
                     prefix = "mobile-390" if mobile else "desktop-1280"
+                    page.set_viewport_size({"width": first[0], "height": first[1]})
                     verify_empty_daily_digest(page, database, run_dir, manifest, prefix, first)
                     if mobile:
                         verify_empty_timeline(page, database, run_dir, manifest, prefix, first)

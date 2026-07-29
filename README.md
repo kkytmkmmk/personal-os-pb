@@ -15,6 +15,14 @@ See [the Phase 5 final remediation record](docs/ux_phase5_final_remediation.md) 
 See [the Phase A stability record](docs/phase_a_stability.md) for isolated browser journeys, timeout handling, Chromium verification, and benchmark comparison safeguards.
 See [the daily digest record](docs/daily_digest.md) for the evidence-backed Today overview and its non-mutating consultation entry points.
 See [the personal change Timeline guide](docs/change_timeline.md) for the read-only, semantic history projection in Explore.
+See [Decision Replay](docs/decision_replay.md) for the evidence-backed decision lifecycle, and [first real use](docs/first_real_use.md) before importing personal history.
+See the [Decision Replay visual review](docs/decision_replay_visual_review.md) for the synthetic verification screens and approval process.
+
+## Decision Replay and first use
+
+- Decision Replay keeps consultation recommendations separate from the user's own decision, execution, result and later evaluation. Viewing a replay never writes a Fact or Decision.
+- The Settings screen includes a local-only feedback form and an operational-readiness card for the SQLite integrity check, last backup and stale analysis-job status.
+- Before importing real history, follow [the first-real-use checklist](docs/first_real_use.md). It explains backups, local/cloud extraction controls and incremental import.
 
 ## Rebuild additions (2026-07-26)
 

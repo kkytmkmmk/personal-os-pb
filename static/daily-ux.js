@@ -192,7 +192,11 @@
   function bindDigestActions(card) {
     $$('[data-digest-record]', card).forEach(button => button.addEventListener('click', () => { navigate('home'); window.setTimeout(() => $('#record-text')?.focus(), 0); }));
     $$('[data-digest-chat]', card).forEach(button => button.addEventListener('click', () => { navigate('chat'); window.setTimeout(() => $('#chat-message')?.focus(), 0); }));
-    $$('[data-digest-decision]', card).forEach(button => button.addEventListener('click', () => navigate('decisions')));
+    $$('[data-digest-decision]', card).forEach(button => button.addEventListener('click', () => {
+      const id = Number(button.dataset.digestDecision || 0);
+      if (id && ['結果待ち', '後日評価待ち'].includes(button.dataset.digestDecisionState || '')) window.personalOsOpenDecisionReplay?.(id, button);
+      else navigate('decisions');
+    }));
     $$('[data-digest-evidence-kind]', card).forEach(button => button.addEventListener('click', () => navigate(button.dataset.digestEvidenceKind === 'decision' ? 'decisions' : 'home')));
     $$('[data-digest-timeline]', card).forEach(button => button.addEventListener('click', () => {
       navigate('explore');
@@ -226,7 +230,7 @@
         return;
       }
       const rows = (items, renderer, emptyText) => items.length ? items.map(renderer).join('') : `<p class="help">${emptyText}</p>`;
-      card.innerHTML = `<section class="digest-headline"><h2>今日の一言</h2><p>${escapeHtml(digest.headline?.text || '最近の大きな変化はまだありません')}</p>${digestBasis(digest.headline)}</section><section class="digest-section"><h3>次にやること</h3>${rows(next, item => `<article class="timeline-row"><div><b>${escapeHtml(item.title || '確認すること')}</b><span class="source">${escapeHtml(item.state_label || '')}</span></div><button type="button" class="secondary" data-digest-decision="${Number(item.id)}">${escapeHtml(item.action || '確認する')}</button></article>`, '今すぐ対応が必要なことはありません。')}</section><section class="digest-section"><div class="digest-section-heading"><h3>最近変わったこと</h3><button type="button" class="secondary" data-digest-timeline>すべての変化を見る</button></div>${rows(recent, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '記憶の更新')}</b><span>${escapeHtml(item.change_type || '更新')}</span>${digestBasis(item)}</article>`, '最近の変化はまだありません。')}</section><section class="digest-section"><h3>思い出しておくこと</h3>${rows(remember, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '確認済みの記録')}</b>${digestBasis(item)}</article>`, '確認できる記憶はまだありません。')}</section><section class="digest-section"><h3>相談候補</h3>${rows(prompts, item => `<button type="button" class="secondary digest-prompt" data-digest-prompt="${escapeHtml(item.text || '')}">${escapeHtml(item.text || '相談する')}</button>`, '今の記録から作れる相談候補はまだありません。')}</section>`;
+      card.innerHTML = `<section class="digest-headline"><h2>今日の一言</h2><p>${escapeHtml(digest.headline?.text || '最近の大きな変化はまだありません')}</p>${digestBasis(digest.headline)}</section><section class="digest-section"><h3>次にやること</h3>${rows(next, item => `<article class="timeline-row"><div><b>${escapeHtml(item.title || '確認すること')}</b><span class="source">${escapeHtml(item.state_label || '')}</span></div><button type="button" class="secondary" data-digest-decision="${Number(item.id)}" data-digest-decision-state="${escapeHtml(item.state_label || '')}">${escapeHtml(item.action || '確認する')}</button></article>`, '今すぐ対応が必要なことはありません。')}</section><section class="digest-section"><div class="digest-section-heading"><h3>最近変わったこと</h3><button type="button" class="secondary" data-digest-timeline>すべての変化を見る</button></div>${rows(recent, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '記憶の更新')}</b><span>${escapeHtml(item.change_type || '更新')}</span>${digestBasis(item)}</article>`, '最近の変化はまだありません。')}</section><section class="digest-section"><h3>思い出しておくこと</h3>${rows(remember, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '確認済みの記録')}</b>${digestBasis(item)}</article>`, '確認できる記憶はまだありません。')}</section><section class="digest-section"><h3>相談候補</h3>${rows(prompts, item => `<button type="button" class="secondary digest-prompt" data-digest-prompt="${escapeHtml(item.text || '')}">${escapeHtml(item.text || '相談する')}</button>`, '今の記録から作れる相談候補はまだありません。')}</section>`;
       bindDigestActions(card);
     } catch { card.innerHTML = '<h2>今日のダイジェスト</h2><p class="help">いまはダイジェストを確認できません。入力内容は失われていません。</p>'; }
     finally { card.removeAttribute('aria-busy'); }
@@ -293,6 +297,140 @@
     document.body.append(sheet);
     $$('[data-sheet-close]', sheet).forEach(button => button.addEventListener('click', () => closeSheet(sheet)));
     return sheet;
+  }
+
+  const replayStageLabels = {
+    trigger: 'きっかけ', context: '検討した背景', options: '選択肢', recommendation: '相談で得た提案',
+    decision: '決めたこと', rationale: '決めた理由', execution: '実行', result: '結果',
+    later_evaluation: '後日評価', lesson: '次回に活かすこと'
+  };
+  const replayStatusLabels = { recorded: '記録あり', missing: '未記録', not_applicable: '対象外', inferred_candidate: '根拠付きの候補' };
+
+  function replayStage(stage) {
+    const items = Array.isArray(stage.items) && stage.items.length ? `<ul>${stage.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
+    const evidence = Array.isArray(stage.basis) && stage.basis.length
+      ? `<details class="replay-evidence"><summary>根拠を見る（${stage.basis.length}件）</summary><ul>${stage.basis.map(item => `<li>${escapeHtml(item.kind === 'fact' ? (item.summary || '確認済みの関連情報') : `${item.kind} #${item.id}`)}</li>`).join('')}</ul></details>`
+      : '';
+    return `<article class="replay-stage replay-stage-${escapeHtml(stage.status || 'missing')}"><div class="replay-stage-head"><h3>${escapeHtml(replayStageLabels[stage.stage] || '記録')}</h3><span class="pill">${escapeHtml(replayStatusLabels[stage.status] || '未記録')}</span></div>${stage.occurred_at ? `<p class="meta">${escapeHtml(stage.occurred_at)}</p>` : ''}${stage.summary ? `<p>${escapeHtml(stage.summary)}</p>` : ''}${items}${evidence}</article>`;
+  }
+
+  function replayAction(action, decisionId) {
+    if (!action) return '';
+    return `<div class="replay-next-action"><h3>次にできること</h3><button type="button" data-replay-action="${escapeHtml(action.type)}" data-decision-id="${Number(decisionId)}">${escapeHtml(action.label || '判断を確認する')}</button></div>`;
+  }
+
+  async function openDecisionReplay(decisionId, opener) {
+    const sheet = $('#decision-replay-sheet'), content = $('#decision-replay-content');
+    if (!sheet || !content || !Number(decisionId)) return;
+    content.innerHTML = '<p class="help">判断の流れを読み込んでいます…</p>';
+    openSheet(sheet.id, opener || (document.activeElement instanceof HTMLElement ? document.activeElement : undefined));
+    try {
+      const response = await fetch(`/api/decisions/${Number(decisionId)}/replay`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || '判断を読み込めませんでした');
+      const stages = Array.isArray(payload.stages) ? payload.stages : [];
+      content.innerHTML = `<header class="replay-header"><p class="meta">${escapeHtml(domainLabel(payload.decision?.domain))} ・ ${escapeHtml(payload.decision?.decided_on || payload.decision?.created_at || '')}</p><h3>${escapeHtml(payload.decision?.title || '判断')}</h3>${payload.has_sensitive_content ? '<p class="help">機微情報はマスク中です。</p>' : ''}</header><div class="replay-stages">${stages.map(replayStage).join('')}</div>${replayAction(payload.next_action, payload.decision?.id)}</div><div class="actions"><button type="button" class="secondary" data-replay-consult>この判断について相談する</button></div>`;
+      content.querySelector('[data-replay-consult]')?.addEventListener('click', () => {
+        closeSheet(sheet); navigate('chat');
+        window.setTimeout(() => { const field = $('#chat-message'); if (field) { field.value = `「${payload.decision?.title || 'この判断'}」を、次回の判断に活かせる形で整理してください。`; field.focus(); field.dispatchEvent(new Event('input', { bubbles: true })); } }, 0);
+      });
+      content.querySelector('[data-replay-action]')?.addEventListener('click', async event => {
+        const button = event.currentTarget, type = button.dataset.replayAction, id = Number(button.dataset.decisionId);
+        if (type === 'record_result') { closeSheet(sheet); window.personalOsOpenDecisionOutcome?.(id, 'result'); return; }
+        if (type === 'record_evaluation') { closeSheet(sheet); window.personalOsOpenDecisionOutcome?.(id, 'evaluate'); return; }
+        if (type === 'mark_executed') {
+          button.disabled = true;
+          const response = await fetch(`/api/decisions/${id}/execute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: 'ユーザーが実行した' }) });
+          if (!response.ok) { button.disabled = false; announce('実行済みとして記録できませんでした'); return; }
+          await openDecisionReplay(id, opener); window.refreshDecisions?.(); window.refreshToday?.(); return;
+        }
+        closeSheet(sheet); navigate('decisions');
+      });
+    } catch (error) { content.innerHTML = `<p class="help">${escapeHtml(error.message || '判断を読み込めませんでした')}</p>`; }
+  }
+
+  function setupDecisionReplay() {
+    window.personalOsOpenDecisionReplay = openDecisionReplay;
+    document.addEventListener('click', event => {
+      const button = event.target.closest('[data-decision-replay]');
+      if (button) openDecisionReplay(button.dataset.decisionReplay, button);
+    });
+    const openFromHash = () => {
+      const match = location.hash.match(/^#decisions\/replay\/(\d+)$/);
+      if (!match) return;
+      navigate('decisions');
+      window.setTimeout(() => openDecisionReplay(Number(match[1])), 80);
+    };
+    window.addEventListener('hashchange', openFromHash);
+    window.setTimeout(openFromHash, 100);
+  }
+
+  function setupUxFeedback() {
+    const sheet = $('#ux-feedback-sheet'), form = $('#ux-feedback-form');
+    if (!sheet || !form || form.dataset.ready) return;
+    form.dataset.ready = 'true';
+    const body = $('#ux-feedback-body', sheet), expected = $('#ux-feedback-expected', sheet);
+    const draftKey = 'personal-os-draft-ux-feedback';
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(draftKey) || '{}');
+      if (saved.body) body.value = saved.body;
+      if (saved.expected) expected.value = saved.expected;
+    } catch { /* ignore corrupt local draft */ }
+    const saveDraft = () => sessionStorage.setItem(draftKey, JSON.stringify({ body: body.value, expected: expected.value }));
+    body.addEventListener('input', saveDraft); expected.addEventListener('input', saveDraft);
+    const renderList = async () => {
+      const list = $('#ux-feedback-list', sheet); if (!list) return;
+      try {
+        const rows = await fetch('/api/ux-feedback').then(response => response.ok ? response.json() : []);
+        list.innerHTML = rows.length ? `<h3>最近の記録</h3>${rows.slice(0, 5).map(row => `<article class="feedback-item"><b>${escapeHtml({ improvement: '使いにくい', bug: '動作がおかしい', confusing: '分かりにくい', praise: '良かった' }[row.feedback_type] || '気づき')}</b><span class="pill">${escapeHtml({ low: '低', medium: '中', high: '高' }[row.severity] || '中')}</span><p>${escapeHtml(row.body)}</p><p class="meta">${escapeHtml(row.screen)} ・ ${escapeHtml(row.created_at || '')}</p></article>`).join('')}` : '<p class="help">まだ記録はありません。</p>';
+      } catch { list.innerHTML = '<p class="help">記録を読み込めませんでした。</p>'; }
+    };
+    window.personalOsOpenFeedback = opener => { closeSheet(opener?.closest?.('.ui-sheet')); openSheet('ux-feedback-sheet', opener); renderList(); };
+    document.querySelectorAll('[data-action="ux-feedback"]').forEach(button => button.addEventListener('click', () => window.personalOsOpenFeedback(button)));
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
+      const notice = $('#ux-feedback-notice', sheet); notice.textContent = 'ローカルに記録しています…';
+      try {
+        const payload = Object.fromEntries(new FormData(form));
+        const response = await fetch('/api/ux-feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || '記録できませんでした');
+        form.reset(); sessionStorage.removeItem(draftKey); notice.textContent = 'この端末のPersonal OSに記録しました。'; renderList();
+      } catch (error) { notice.textContent = error.message || '記録できませんでした。入力は保持しています。'; }
+      finally { submit.disabled = false; }
+    });
+    $('#ux-feedback-copy', sheet)?.addEventListener('click', async () => {
+      const payload = Object.fromEntries(new FormData(form));
+      const text = `## Personal OS利用フィードバック\n\n- 画面: ${payload.screen}\n- 種類: ${payload.feedback_type}\n- 内容: ${payload.body || ''}\n- 期待していたこと: ${payload.expected_behavior || ''}\n- 重要度: ${payload.severity}`;
+      try { await navigator.clipboard.writeText(text); $('#ux-feedback-notice', sheet).textContent = 'Markdownをコピーしました。'; }
+      catch { $('#ux-feedback-notice', sheet).textContent = 'コピーできませんでした。内容は入力欄に残っています。'; }
+    });
+  }
+
+  function setupProductionReadiness() {
+    const settings = $('#settings');
+    if (!settings || $('#production-readiness')) return;
+    const card = document.createElement('section');
+    card.id = 'production-readiness'; card.className = 'card production-readiness';
+    card.innerHTML = '<h2>本人利用開始の確認</h2><p class="help">この端末の状態だけを確認します。会話本文や本人データを外部へ送信しません。</p><div id="production-readiness-status" class="help" aria-live="polite">状態を確認できます。</div><div class="actions"><button type="button" class="secondary" data-production-readiness-refresh>状態を更新</button><button type="button" class="secondary" data-action="ux-feedback">使い方について気づいたことを記録</button></div>';
+    settings.append(card);
+    const refresh = async () => {
+      const status = $('#production-readiness-status', card); status.textContent = '状態を確認しています…';
+      try {
+        const response = await fetch('/api/health'); const health = await response.json();
+        if (!response.ok) throw new Error(health.error || '状態を確認できませんでした');
+        const database = health.integrity === 'ok' ? 'データベース: 正常' : 'データベース: 確認が必要';
+        const backup = health.backup?.latest_at ? `最終バックアップ: ${health.backup.latest_at}` : '最終バックアップ: まだありません';
+        const analysis = health.analysis?.stale_running ? '解析: 確認が必要な実行中Jobがあります' : '解析: 実行中Jobは正常です';
+        status.textContent = `${database} ／ ${backup} ／ ${analysis}`;
+      } catch (error) { status.textContent = error.message || '状態を確認できませんでした。'; }
+    };
+    card.querySelector('[data-production-readiness-refresh]')?.addEventListener('click', refresh);
+    card.querySelector('[data-action="ux-feedback"]')?.addEventListener('click', event => { window.personalOsOpenFeedback?.(event.currentTarget); $('#ux-feedback-screen').value = 'settings'; });
+    window.personalOsRefreshProductionReadiness = refresh;
+    window.addEventListener('hashchange', () => { if (location.hash === '#settings') refresh(); });
+    refresh();
   }
 
   function streamlineDecisions() {
@@ -367,7 +505,7 @@
           || Number(left.id || 0) - Number(right.id || 0));
         target.innerHTML = items.length ? items.map(item => {
           const rationale = item.rationale || item.decision || '理由は未記録です。';
-          return `<article class="cycle-card"><div class="entry-head"><div><h3>${escapeHtml(item.title || '判断')}</h3><p class="meta">${escapeHtml(decisionState(item))} · 更新 ${escapeHtml(item.updated_at || item.decided_on || item.created_at || '')}</p></div><span class="pill">${domainLabel(item.domain)}</span></div><p>${escapeHtml(rationale)}</p>${item.result ? `<p class="source">結果: ${escapeHtml(item.result)}</p>` : ''}${item.later_evaluation ? `<p class="source">後日評価: ${escapeHtml(item.later_evaluation)}</p>` : ''}<div class="cycle-actions">${actionFor(item)}</div></article>`;
+          return `<article class="cycle-card"><div class="entry-head"><div><h3>${escapeHtml(item.title || '判断')}</h3><p class="meta">${escapeHtml(decisionState(item))} · 更新 ${escapeHtml(item.updated_at || item.decided_on || item.created_at || '')}</p></div><span class="pill">${domainLabel(item.domain)}</span></div><p>${escapeHtml(rationale)}</p>${item.result ? `<p class="source">結果: ${escapeHtml(item.result)}</p>` : ''}${item.later_evaluation ? `<p class="source">後日評価: ${escapeHtml(item.later_evaluation)}</p>` : ''}<div class="cycle-actions">${actionFor(item)}<button type="button" class="secondary" data-decision-replay="${Number(item.id)}">振り返る</button></div></article>`;
         }).join('') : '<div class="empty-state"><p>条件に合う判断はありません。相談から提案を残すと、結果まで追跡できます。</p><button type="button" class="secondary" data-decision-empty-chat>相談する</button></div>';
         $$('[data-decision-outcome]', target).forEach(button => button.addEventListener('click', () => openOutcome(button.dataset.decisionOutcome, button.dataset.outcomeMode)));
         $$('[data-decision-action="confirm"]', target).forEach(button => button.addEventListener('click', async () => {
@@ -468,6 +606,9 @@
     refreshDailyDigest();
     streamlineConsultation();
     streamlineDecisions();
+    setupDecisionReplay();
+    setupUxFeedback();
+    setupProductionReadiness();
     streamlineExplore();
     standardizeDomainViews();
     simplifyDomainCopy();

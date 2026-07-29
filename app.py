@@ -1389,6 +1389,21 @@ def initialize() -> None:
               value TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ux_feedback (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              screen TEXT NOT NULL,
+              feedback_type TEXT NOT NULL DEFAULT 'improvement',
+              body TEXT NOT NULL,
+              expected_behavior TEXT NOT NULL DEFAULT '',
+              severity TEXT NOT NULL DEFAULT 'medium',
+              status TEXT NOT NULL DEFAULT 'open',
+              created_at TEXT NOT NULL,
+              resolved_at TEXT,
+              CHECK(feedback_type IN ('improvement','bug','confusing','praise')),
+              CHECK(severity IN ('low','medium','high')),
+              CHECK(status IN ('open','resolved','dismissed'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_ux_feedback_status ON ux_feedback(status,created_at DESC);
             CREATE TABLE IF NOT EXISTS privacy_audit_log (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               target_type TEXT NOT NULL,
@@ -1678,6 +1693,7 @@ def initialize() -> None:
     backfill_fact_keys()
     migrate_current_truth()
     migrate_visualization_benchmark()
+    migrate_decision_replay()
     backfill_fact_evidence()
     with db() as connection:
         backfill_fact_evidence_identities(connection)
@@ -3213,6 +3229,34 @@ def migrate_visualization_benchmark() -> None:
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
             ("012_visualization_benchmark", now()),
         )
+
+
+def migrate_decision_replay() -> None:
+    """Record the additive, local-only B-3 schema migration.
+
+    The table is created by ``initialize`` for new installations.  Keeping the
+    migration marker separate means a production start takes a recoverable
+    backup before the first existing database receives the new table.
+    """
+    with db() as connection:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS ux_feedback (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 screen TEXT NOT NULL,
+                 feedback_type TEXT NOT NULL DEFAULT 'improvement',
+                 body TEXT NOT NULL,
+                 expected_behavior TEXT NOT NULL DEFAULT '',
+                 severity TEXT NOT NULL DEFAULT 'medium',
+                 status TEXT NOT NULL DEFAULT 'open',
+                 created_at TEXT NOT NULL,
+                 resolved_at TEXT,
+                 CHECK(feedback_type IN ('improvement','bug','confusing','praise')),
+                 CHECK(severity IN ('low','medium','high')),
+                 CHECK(status IN ('open','resolved','dismissed'))
+            )"""
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_ux_feedback_status ON ux_feedback(status,created_at DESC)")
+        connection.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)", ("013_decision_replay", now()))
 
 
 def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
@@ -6647,6 +6691,183 @@ def cycle_snapshot(cycle_id: int) -> dict[str, object] | None:
     }
 
 
+REPLAY_STAGE_LABELS = {
+    "trigger": "きっかけ",
+    "context": "検討した背景",
+    "options": "選択肢",
+    "recommendation": "相談で得た提案",
+    "decision": "決めたこと",
+    "rationale": "決めた理由",
+    "execution": "実行",
+    "result": "結果",
+    "later_evaluation": "後日評価",
+    "lesson": "次回に活かすこと",
+}
+REPLAY_SENSITIVE_DOMAINS = {"finance", "money", "relationship", "people", "health"}
+
+
+def _replay_safe_text(domain: str, value: object, fallback: str, include_sensitive: bool) -> str:
+    if canonical_domain(domain) in REPLAY_SENSITIVE_DOMAINS and not include_sensitive:
+        return fallback
+    return str(value or fallback).strip()[:4000]
+
+
+def _replay_stage(stage: str, *, summary: str = "", items: list[str] | None = None,
+                  occurred_at: str | None = None, status: str = "recorded",
+                  basis: list[dict[str, object]] | None = None) -> dict[str, object]:
+    return {
+        "stage": stage,
+        "label": REPLAY_STAGE_LABELS[stage],
+        "status": status,
+        "summary": summary,
+        "items": items or [],
+        "occurred_at": occurred_at or "",
+        "basis": basis or [],
+    }
+
+
+def _replay_next_time(value: object) -> str:
+    """Return an explicitly recorded lesson; never infer one from an LLM."""
+    for line in str(value or "").splitlines():
+        normalized = line.strip()
+        if normalized.startswith(("次回:", "次回に活かすこと:", "次回に活かすこと：")):
+            return normalized.split(":", 1)[-1].split("：", 1)[-1].strip()
+    return ""
+
+
+def decision_replay(decision_id: int, include_sensitive: bool = False) -> dict[str, object] | None:
+    """Read-only lifecycle projection for a user-owned Decision.
+
+    Recommendations remain a distinct assistant artifact; this function only
+    shows them as context and never upgrades them into a user Decision.
+    """
+    with db() as connection:
+        row = connection.execute("SELECT * FROM decisions WHERE id=?", (decision_id,)).fetchone()
+        if not row:
+            return None
+        decision = dict(row)
+        recommendation = None
+        if decision.get("source_recommendation_id"):
+            recommendation_row = connection.execute(
+                "SELECT id,title,rationale,options_json,created_at,updated_at FROM recommendations WHERE id=?",
+                (decision["source_recommendation_id"],),
+            ).fetchone()
+            recommendation = dict(recommendation_row) if recommendation_row else None
+        plan = connection.execute(
+            "SELECT id,title,steps_json,status,created_at,updated_at FROM plans WHERE decision_id=? ORDER BY id DESC LIMIT 1",
+            (decision_id,),
+        ).fetchone()
+        events = [dict(item) for item in connection.execute(
+            "SELECT id,event_type,summary,occurred_at,created_at FROM execution_events WHERE decision_id=? ORDER BY COALESCE(occurred_at,created_at),id",
+            (decision_id,),
+        )]
+        related_ids = _json_value(decision.get("related_fact_ids_json"), [])
+        related_ids = [int(value) for value in related_ids if str(value).isdigit()][:20]
+        related_facts: list[dict[str, object]] = []
+        if related_ids:
+            marks = ",".join("?" for _ in related_ids)
+            related_facts = [dict(item) for item in connection.execute(
+                f"""SELECT f.id,f.category,f.summary,f.status,COUNT(e.id) AS evidence_count
+                    FROM facts f LEFT JOIN fact_evidence e ON e.fact_id=f.id
+                    WHERE f.id IN ({marks}) GROUP BY f.id ORDER BY f.id""",
+                related_ids,
+            )]
+
+    domain = canonical_domain(str(decision.get("domain") or "other"))
+    masked = domain in REPLAY_SENSITIVE_DOMAINS and not include_sensitive
+    options = _json_value(decision.get("options_json"), [])
+    options = [str(item)[:500] for item in options] if isinstance(options, list) else []
+    decision_basis = [{"kind": "decision", "id": int(decision_id)}]
+    fact_basis = [
+        {"kind": "fact", "id": int(item["id"]), "summary": _replay_safe_text(domain, item.get("summary"), "確認済みの関連情報", include_sensitive),
+         "evidence_count": int(item.get("evidence_count") or 0)}
+        for item in related_facts
+    ]
+    stages: list[dict[str, object]] = []
+    trigger = str(decision.get("question") or decision.get("title") or "").strip()
+    stages.append(_replay_stage(
+        "trigger", summary=_replay_safe_text(domain, trigger, "判断を記録しました", include_sensitive),
+        occurred_at=str(decision.get("created_at") or ""), basis=decision_basis,
+    ))
+    context = str(decision.get("context") or "").strip()
+    stages.append(_replay_stage(
+        "context", summary=_replay_safe_text(domain, context, "検討した背景は未記録です", include_sensitive),
+        occurred_at=str(decision.get("created_at") or ""),
+        status="recorded" if context else "missing", basis=fact_basis,
+    ))
+    stages.append(_replay_stage(
+        "options", items=[_replay_safe_text(domain, item, "機微情報の選択肢", include_sensitive) for item in options],
+        occurred_at=str(decision.get("created_at") or ""), status="recorded" if options else "missing", basis=decision_basis,
+    ))
+    if recommendation:
+        stages.append(_replay_stage(
+            "recommendation", summary=_replay_safe_text(domain, recommendation.get("rationale") or recommendation.get("title"), "相談で得た提案があります", include_sensitive),
+            occurred_at=str(recommendation.get("created_at") or ""), basis=[{"kind": "recommendation", "id": int(recommendation["id"])}],
+        ))
+    else:
+        stages.append(_replay_stage("recommendation", summary="相談からの提案は記録されていません", status="not_applicable"))
+    chosen = str(decision.get("selected_option") or decision.get("decision") or "").strip()
+    state = str(decision.get("decision_state") or "candidate").lower()
+    decision_recorded = state in {"decided", "executed", "result"} and bool(chosen)
+    stages.append(_replay_stage(
+        "decision", summary=_replay_safe_text(domain, chosen, "決めたことは未記録です", include_sensitive),
+        occurred_at=str(decision.get("decided_on") or ""), status="recorded" if decision_recorded else "missing", basis=decision_basis,
+    ))
+    rationale = str(decision.get("rationale") or "").strip()
+    stages.append(_replay_stage(
+        "rationale", summary=_replay_safe_text(domain, rationale, "決めた理由は未記録です", include_sensitive),
+        occurred_at=str(decision.get("decided_on") or ""), status="recorded" if rationale else "missing", basis=fact_basis or decision_basis,
+    ))
+    execution_summary = "\n".join(str(event.get("summary") or "").strip() for event in events if str(event.get("summary") or "").strip())
+    execution_at = next((str(event.get("occurred_at") or event.get("created_at") or "") for event in events), "")
+    executed = state in {"executed", "result"} or bool(events)
+    stages.append(_replay_stage(
+        "execution", summary=_replay_safe_text(domain, execution_summary, "実行はまだ記録されていません", include_sensitive),
+        occurred_at=execution_at, status="recorded" if executed else "missing",
+        basis=[{"kind": "execution_event", "id": int(event["id"])} for event in events] or decision_basis,
+    ))
+    result = str(decision.get("result") or "").strip()
+    stages.append(_replay_stage(
+        "result", summary=_replay_safe_text(domain, result, "結果はまだ記録されていません", include_sensitive),
+        occurred_at=str(decision.get("outcome_recorded_at") or ""), status="recorded" if result else "missing", basis=decision_basis,
+    ))
+    evaluation = str(decision.get("later_evaluation") or "").strip()
+    stages.append(_replay_stage(
+        "later_evaluation", summary=_replay_safe_text(domain, evaluation, "後日評価はまだ記録されていません", include_sensitive),
+        occurred_at=str(decision.get("evaluation_recorded_at") or ""), status="recorded" if evaluation else "missing", basis=decision_basis,
+    ))
+    lesson = _replay_next_time(evaluation) or _replay_next_time(result)
+    stages.append(_replay_stage(
+        "lesson", summary=_replay_safe_text(domain, lesson, "次回に活かすことは未記録です", include_sensitive),
+        occurred_at=str(decision.get("evaluation_recorded_at") or decision.get("outcome_recorded_at") or ""),
+        status="recorded" if lesson else ("missing" if result else "not_applicable"), basis=decision_basis,
+    ))
+
+    if state in {"candidate", "considered"}:
+        next_action = {"type": "record_decision", "label": "決めたことを記録する"}
+    elif state == "decided":
+        next_action = {"type": "mark_executed", "label": "実行したと記録する"}
+    elif state == "executed":
+        next_action = {"type": "record_result", "label": "結果を記録する"}
+    elif state == "result" and not evaluation:
+        next_action = {"type": "record_evaluation", "label": "後日評価を記録する"}
+    elif state == "result" and not lesson:
+        next_action = {"type": "open_decision", "label": "次回に活かすことを追記する"}
+    else:
+        next_action = None
+    public_decision = {
+        "id": int(decision_id), "title": "機微情報の判断" if masked else str(decision.get("title") or "判断"),
+        "domain": domain, "state": state, "created_at": str(decision.get("created_at") or ""),
+        "decided_on": str(decision.get("decided_on") or ""), "masked": masked,
+    }
+    return {
+        "decision": public_decision, "stages": stages,
+        "missing_stages": [item["stage"] for item in stages if item["status"] == "missing"],
+        "next_action": next_action, "has_sensitive_content": masked,
+        "plan": {"id": int(plan["id"]), "title": "機微情報の計画" if masked else str(plan["title"]), "status": str(plan["status"])} if plan else None,
+    }
+
+
 def consultation_response_type(message: str) -> str:
     text = str(message or "").lower()
     if any(term in text for term in ("前の判断", "過去の判断", "正しかった", "結果どう", "振り返")):
@@ -8160,6 +8381,18 @@ class Handler(BaseHTTPRequestHandler):
                        ORDER BY p.created_at DESC LIMIT 20"""
                 )]
             return self.send_json(rows)
+        replay_match = re.fullmatch(r"/api/decisions/(\d+)/replay", path)
+        if replay_match:
+            query = parse_qs(urlparse(self.path).query)
+            include_sensitive = query.get("include_sensitive", ["false"])[0].lower() == "true"
+            replay = decision_replay(int(replay_match.group(1)), include_sensitive=include_sensitive)
+            return self.send_json(replay or {"error": "Not found"}, HTTPStatus.OK if replay else HTTPStatus.NOT_FOUND)
+        if path == "/api/ux-feedback":
+            with db() as connection:
+                rows = [dict(row) for row in connection.execute(
+                    "SELECT id,screen,feedback_type,body,expected_behavior,severity,status,created_at,resolved_at FROM ux_feedback ORDER BY created_at DESC,id DESC LIMIT 100"
+                )]
+            return self.send_json(rows)
         if path == "/api/decisions":
             with db() as connection:
                 rows = [dict(row) for row in connection.execute(
@@ -9065,6 +9298,30 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(result)
             except (ValueError, TypeError, sqlite3.Error, json.JSONDecodeError) as error:
                 return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        if path == "/api/ux-feedback":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                screen = str(payload.get("screen", "other")).strip()[:80] or "other"
+                feedback_type = str(payload.get("feedback_type", "improvement")).strip().lower()
+                severity = str(payload.get("severity", "medium")).strip().lower()
+                body = str(payload.get("body", "")).strip()[:4000]
+                expected = str(payload.get("expected_behavior", "")).strip()[:2000]
+                if feedback_type not in {"improvement", "bug", "confusing", "praise"}:
+                    raise ValueError("Invalid feedback_type")
+                if severity not in {"low", "medium", "high"}:
+                    raise ValueError("Invalid severity")
+                if not body:
+                    raise ValueError("body is required")
+                with db() as connection:
+                    cursor = connection.execute(
+                        """INSERT INTO ux_feedback(screen,feedback_type,body,expected_behavior,severity,status,created_at)
+                           VALUES(?,?,?,?,?,'open',?)""",
+                        (screen, feedback_type, body, expected, severity, now()),
+                    )
+                return self.send_json({"id": cursor.lastrowid, "message": "Feedback saved locally"}, HTTPStatus.CREATED)
+            except (ValueError, TypeError, json.JSONDecodeError, sqlite3.Error) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path not in {"/api/entries", "/api/capture"}:
             return self.send_json({"error": "Not found"}, 404)
         try:
@@ -9421,7 +9678,7 @@ if __name__ == "__main__":
         )
         raise SystemExit(2)
     port = APP_PORT
-    migration_backup = backup_before_migration("011_memory_correctness")
+    migration_backup = backup_before_migration("013_decision_replay")
     initialize()
     acquired, existing = acquire_runtime_lease(port)
     if not acquired:

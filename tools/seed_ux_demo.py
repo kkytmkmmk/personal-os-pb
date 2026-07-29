@@ -215,6 +215,29 @@ def main() -> int:
                 "decision_state": "result" if result else ("executed" if domain == "finance" else "decided"), "result": result, "decided_on": "2026-07-29",
                 "created_at": stamp, "updated_at": stamp,
             })
+        # A complete, explicitly user-owned lifecycle is kept separate from
+        # the recommendation that preceded it.  It is synthetic-only and
+        # drives the Decision Replay acceptance journey.
+        recommendation_id = insert(connection, "recommendations", {
+            "domain": "travel", "title": "Sample weekend proposal", "rationale": "Keep transfer time short.",
+            "options_json": json.dumps(["Sample hot spring", "Sample city walk"], ensure_ascii=False),
+            "criteria_json": "[]", "source_fact_ids_json": "[]", "source_decision_ids_json": "[]",
+            "source_evidence_ids_json": "[]", "context_json": "{}", "tradeoffs_json": "[]", "missing_context_json": "[]",
+            "status": "accepted", "created_at": "2026-07-01T09:00:00+09:00", "updated_at": "2026-07-01T09:00:00+09:00",
+        })
+        replay_decision_id = insert(connection, "decisions", {
+            "domain": "travel", "title": "Sample weekend decision", "context": "A short weekend is available.",
+            "question": "How should the weekend be used?", "options_json": json.dumps(["Sample hot spring", "Sample city walk"], ensure_ascii=False),
+            "decision": "Choose Sample hot spring", "selected_option": "Sample hot spring", "rationale": "Shorter travel time.",
+            "status": "decided", "decision_state": "result", "decided_on": "2026-07-02", "result": "It was relaxing.",
+            "later_evaluation": "次回: keep the transfer time short.", "source_recommendation_id": recommendation_id,
+            "outcome_recorded_at": "2026-07-04", "evaluation_recorded_at": "2026-07-10", "related_fact_ids_json": "[]",
+            "related_entity_ids_json": "[]", "created_at": "2026-07-01T09:00:00+09:00", "updated_at": "2026-07-10T09:00:00+09:00",
+        })
+        insert(connection, "execution_events", {
+            "decision_id": replay_decision_id, "plan_id": None, "event_type": "executed", "summary": "User completed the sample trip.",
+            "source_entry_id": None, "source_chunk_id": None, "occurred_at": "2026-07-03", "created_at": "2026-07-03T12:00:00+09:00",
+        })
         connection.commit()
     print(f"Synthetic UX demo database created: {db_path}")
     return 0

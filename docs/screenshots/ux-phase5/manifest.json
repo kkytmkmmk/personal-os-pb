@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "generated_at": "2026-07-29T13:27:53.733623+00:00",
+  "generated_at": "2026-07-29T14:24:35.366038+00:00",
   "environment": "verification",
   "data_type": "synthetic",
   "screenshots": [
@@ -15,7 +15,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "b53cbc70dfea3f5d8af6e4268aa437c596681c2721f3e93dc1fdc53310922266"
     },
@@ -30,7 +30,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "d7fd78c8d9be05297f2ffb7222c823bfa4d7337f40a118114e7e90809ad38030"
     },
@@ -45,9 +45,39 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "1d0bc018b612f677aea40e124db4aa702226e150e4e3b144630cf9068b5b1f24"
+    },
+    {
+      "file": "desktop-1280-decision-replay-evidence.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#decisions",
+      "state": "decision-replay-evidence",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "f6a2090010910c92709b4c583d4e8a6ab454442a095f9e655411d46fc970edff"
+    },
+    {
+      "file": "desktop-1280-decision-replay.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#decisions",
+      "state": "decision-replay",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "d89725bb3bb579a5e565111ba7519a439a1fba86718ec5be6d8fb5eaac87014b"
     },
     {
       "file": "desktop-1280-decision-result-sheet.png",
@@ -60,9 +90,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "a4fa86ee310538043f7de53e7ac8043efa844b05efdb3bb2c61dc0a787f16351"
+      "sha256": "2ae712fbc56d56341ef4d18a45da83354e222ab3e860edca54708aa3a8685bd5"
     },
     {
       "file": "desktop-1280-decisions.png",
@@ -75,9 +105,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "1ece5eccd465f770702bb6dce7a22a7a608bbed55447205e5fd8daef932fa426"
+      "sha256": "caa23b49d948764139358e1591fdead4aa87ca81d212b794e60240acf17565e5"
     },
     {
       "file": "desktop-1280-explore-space.png",
@@ -90,7 +120,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "7953f25dde056c1adc6c29c0f61ae874d13d851357f171ea814c21b07b69dcc8"
     },
@@ -105,9 +135,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "2b9f2fb9a1d18ebcfba39a7ff72f429330f5fec19e3e6b3aaccdcf2631f3a09e"
+      "sha256": "dd22dd8817310676c38365a07b3866d632d1c4cb4aa88a51573b2077e496eba5"
     },
     {
       "file": "desktop-1280-money.png",
@@ -120,9 +150,24 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "ce243976ac024e12169e27838298558590a316b409195e4da855e7eaee6e074b"
+    },
+    {
+      "file": "desktop-1280-production-readiness.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#settings",
+      "state": "production-readiness",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "79ee13ba7e15f496031e3ee55964ad868a9910c5fd90f3ca3eac7ddf45a7a10a"
     },
     {
       "file": "desktop-1280-timeline-detail.png",
@@ -135,7 +180,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "8c7358d6edd7423b3eb67740dcc86e3854e3763cc0f1023b611fb1fe9bda9dc4"
     },
@@ -150,9 +195,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "cee30db2b9bf0aca02ac34c45e0863b4b31bbfb91aa48f17dc3d17a5d3c4ea95"
+      "sha256": "4a3b48b54bbaf3e9375274dbb059193ec78a37e15fe186cc9b9a1bc6e6857701"
     },
     {
       "file": "desktop-1280-today-digest.png",
@@ -165,7 +210,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "546b00c74d162b2d25b8e8b82ac3efd17166b46161c638c25fd4ed026e8a15d6"
     },
@@ -180,9 +225,24 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "546b00c74d162b2d25b8e8b82ac3efd17166b46161c638c25fd4ed026e8a15d6"
+    },
+    {
+      "file": "desktop-1280-ux-feedback.png",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "route": "#settings",
+      "state": "ux-feedback",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "a36107ed4ba05d1721b79baa27d6e964bd65466a91013abb538e02a56c621081"
     },
     {
       "file": "desktop-1440-today.png",
@@ -195,9 +255,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "57fee50f7e011a8c400b4f4966120e06c754abf4d4af42585b898bfa2b2d61ab"
+      "sha256": "932891a9aef9980d21f8d1aea0d101e7d72843b9efd65fdf647ab4b36101cc5e"
     },
     {
       "file": "mobile-375-today.png",
@@ -210,9 +270,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "28bf975bbf69bfeeda41c7eb32261e5d0efc673d6a5371bc0477e4a6e6e01dde"
+      "sha256": "3c4b7c781439b67dd1bf49b92004969044ea2e7c455265746535c69812ce06b0"
     },
     {
       "file": "mobile-390-benchmark.png",
@@ -225,9 +285,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "9ac2458ba06f1262e3b160ea9487f6b90579068097ced470ecb7a5e6d7ce25d3"
+      "sha256": "ac312c66a0bc9716e1ae36b1eed2ce6d5ffc44b866ac936ac335b6d279df4974"
     },
     {
       "file": "mobile-390-chat-result.png",
@@ -240,9 +300,39 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "d48131d0ed719db0579cd7b8b35f81de875d48fb23aaf8f33492db72fb0280e0"
+    },
+    {
+      "file": "mobile-390-decision-replay-missing-stage.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#decisions",
+      "state": "decision-replay-missing-stage",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "59ac158f7a6fbf285137a53cfa76f9d9a52c8360712084082f21b42dd48cb110"
+    },
+    {
+      "file": "mobile-390-decision-replay.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "route": "#decisions",
+      "state": "decision-replay",
+      "data_type": "synthetic",
+      "contains_sensitive_data": false,
+      "reviewed": true,
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
+      "reviewed_by": "codex-visual-review",
+      "sha256": "07a091a10af732d68f5fbcc6dcc9ddb55eabd298a22b381985449551af2d8e93"
     },
     {
       "file": "mobile-390-decision-result-sheet.png",
@@ -255,9 +345,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "3f31ab7a5ff3891d1e413d17d02ecf6d7f3a12ec9e30034dcdea51220ceb5663"
+      "sha256": "c5c20bcd8d2ce53bb5a32fd1677c361669965a7b1782bb0d4dc76f9366d88a86"
     },
     {
       "file": "mobile-390-decisions.png",
@@ -270,9 +360,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "665e211b07e4b560d1937a835419b2dd9db5f50d66d00359b17329ebf4e9f84c"
+      "sha256": "785f30057bc35a73bee8748ab52c89e5446bb66b41b11e5db69f891a724a3e2f"
     },
     {
       "file": "mobile-390-explore-space.png",
@@ -285,9 +375,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "ca84a2e55599843f45a5a7e9756f9d1805ed1df85c858f2ce1bf32f91c8158a3"
+      "sha256": "65e39422dbbef2d360fa63797d1fe5b757ed7d322f4359ffb485b3e531e272d0"
     },
     {
       "file": "mobile-390-memory-image.png",
@@ -300,9 +390,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "9b7c1e2b6783a9091fb460ca0dae2406fe2c8957a6e18dcfe4833bb1eacb0232"
+      "sha256": "29b3f50cf6459473891aacfbc44e1b7ebda0f998aaf11ee53da3a8e5d0066294"
     },
     {
       "file": "mobile-390-memory.png",
@@ -315,7 +405,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "5b975071381269680da17aef2e739f099e3f666c674e895c6d9d7951a8db2f27"
     },
@@ -330,9 +420,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "b29403b13e36591ceeca57bd3bb6211c648f7ba57d36575c4f885c3affc73710"
+      "sha256": "7d6aca7768715850797de8dd5be372102cf266cd23427dabe6c74ca12800e6e5"
     },
     {
       "file": "mobile-390-timeline-detail.png",
@@ -345,9 +435,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "8201c57ae57d30852de6a01ce3ca9becfea0258b035c09d7732104cd51db0bb6"
+      "sha256": "9ddd7ebb9d212dbb046c160e265712a97c8edcd8a18beba9c6bc128e2997b131"
     },
     {
       "file": "mobile-390-timeline-empty.png",
@@ -360,9 +450,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "31897f16c5a4929dfc57c13b8b79bd3fb38b9dfccf97013218aedbd38621df23"
+      "sha256": "e18c91a4f0b8aa1b5441a6a68516fe7218ca019a87e05aa6332670c6745b85de"
     },
     {
       "file": "mobile-390-timeline.png",
@@ -375,9 +465,9 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
-      "sha256": "e9c2231a4521847d7496c209f2ffab1bc8798fe6951a6476fa2aad003caa090a"
+      "sha256": "fedb1d4a7fa94376caac99e1ba530e27b2ffeec4be0f0821e528a45f12d4f4bf"
     },
     {
       "file": "mobile-390-today-digest.png",
@@ -390,7 +480,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "9c33e85f5f9f9443ac3be5d7e079aee543db78d230387474ba86061b0472ee53"
     },
@@ -405,7 +495,7 @@
       "data_type": "synthetic",
       "contains_sensitive_data": false,
       "reviewed": true,
-      "reviewed_at": "2026-07-29T13:28:01.422471+00:00",
+      "reviewed_at": "2026-07-29T14:25:51.686202+00:00",
       "reviewed_by": "codex-visual-review",
       "sha256": "9c33e85f5f9f9443ac3be5d7e079aee543db78d230387474ba86061b0472ee53"
     }

@@ -107,7 +107,13 @@
       const compare = event.event_kind === 'fact_changed' ? `<button type="button" class="secondary" data-timeline-compare="${esc(event.id)}">今と比べる</button>` : '';
       const decision = event.action?.type === 'open_decision' ? '<button type="button" class="secondary" data-timeline-decision>同じ判断を見る</button>' : '';
       content.innerHTML = `<p class="meta">${esc(timelineDate(event.occurred_at))} · ${esc(timelineKindLabel(event.event_kind))} · ${esc(domainLabel(event.domain))}</p><h3>${esc(event.title)}</h3><p>${esc(event.summary || '内容を確認できます')}</p>${comparison}${basis}<p class="help">${detail.currentness === 'current' ? '現在の情報です。' : detail.currentness ? '過去の情報です。' : ''}</p><div class="actions">${compare}${decision}</div>`;
-      content.querySelector('[data-timeline-decision]')?.addEventListener('click', () => window.personalOsNavigate?.('decisions'));
+      content.querySelector('[data-timeline-decision]')?.addEventListener('click', () => {
+        const decisionId = Number(event.action?.decision_id || event.action?.id || event.detail?.decision_id || 0);
+        if (decisionId && typeof window.personalOsOpenDecisionReplay === 'function') {
+          window.personalOsSheets?.close($('timeline-detail-sheet'));
+          window.personalOsOpenDecisionReplay(decisionId);
+        } else window.personalOsNavigate?.('decisions');
+      });
       content.querySelector('[data-timeline-compare]')?.addEventListener('click', () => {
         const prompt = `${timelineDate(event.occurred_at)}の${domainLabel(event.domain)}に関する記録と、現在の${domainLabel(event.domain)}の情報を比較してください`;
         window.personalOsSheets?.close($('timeline-detail-sheet'));
