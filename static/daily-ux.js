@@ -161,7 +161,8 @@
     if (!page || !card) return;
     const header = $('.page-header', page);
     if (header && header.nextElementSibling !== card) header.after(card);
-    const overview = $('#today-overview'); if (overview && card.nextElementSibling !== overview) card.after(overview);
+    const digest = $('#today-digest'); if (digest && card.nextElementSibling !== digest) card.after(digest);
+    const overview = $('#today-overview'); if (overview && (digest || card).nextElementSibling !== overview) (digest || card).after(overview);
     const cycle = $('#today-cycle-summary'); if (cycle && overview?.nextElementSibling !== cycle) overview?.after(cycle);
   }
 
@@ -178,17 +179,53 @@
     new MutationObserver(positionToday).observe(page, { childList: true });
   }
 
-  async function refreshNextActions() {
+  function digestEmpty() {
+    return '<div class="empty-state"><p>まだ今日のダイジェストを作れる記録がありません。</p><span class="help">記録や相談を始めると、ここに今の状態が表示されます。</span><div class="actions"><button type="button" class="secondary" data-digest-record>記録する</button><button type="button" class="secondary" data-digest-chat>相談する</button></div></div>';
+  }
+
+  function digestBasis(item) {
+    const basis = Array.isArray(item?.basis) ? item.basis : [];
+    const first = basis[0] || {};
+    return basis.length ? `<details class="digest-basis"><summary>根拠を見る</summary><p class="help">確認済みの記録・判断をもとに表示しています。</p><button type="button" class="secondary" data-digest-evidence-kind="${escapeHtml(first.kind || '')}">関連する記録を見る</button></details>` : '';
+  }
+
+  function bindDigestActions(card) {
+    $$('[data-digest-record]', card).forEach(button => button.addEventListener('click', () => { navigate('home'); window.setTimeout(() => $('#record-text')?.focus(), 0); }));
+    $$('[data-digest-chat]', card).forEach(button => button.addEventListener('click', () => { navigate('chat'); window.setTimeout(() => $('#chat-message')?.focus(), 0); }));
+    $$('[data-digest-decision]', card).forEach(button => button.addEventListener('click', () => navigate('decisions')));
+    $$('[data-digest-evidence-kind]', card).forEach(button => button.addEventListener('click', () => navigate(button.dataset.digestEvidenceKind === 'decision' ? 'decisions' : 'home')));
+    $$('[data-digest-prompt]', card).forEach(button => button.addEventListener('click', () => {
+      const prompt = button.dataset.digestPrompt || '';
+      navigate('chat');
+      window.setTimeout(() => { const input = $('#chat-message'); if (input) { input.value = prompt; input.focus(); input.dispatchEvent(new Event('input', { bubbles: true })); } }, 0);
+    }));
+  }
+
+  async function refreshDailyDigest() {
     const page = $('#today');
     if (!page) return;
-    let card = $('#today-next-actions');
-    if (!card) { card = document.createElement('section'); card.id = 'today-next-actions'; card.className = 'card'; const cycle = $('#today-cycle-summary'); (cycle || $('#today-overview') || page.lastElementChild)?.after(card); }
+    let card = $('#today-digest');
+    if (!card) { card = document.createElement('section'); card.id = 'today-digest'; card.className = 'card today-digest'; const actions = $('#today-daily-actions'); (actions || page.firstElementChild)?.after(card); }
+    card.setAttribute('aria-busy', 'true');
     try {
-      const snapshot = await fetch('/api/today').then(response => response.json());
-      const items = (snapshot.next_candidates || []).slice(0, 3);
-      card.innerHTML = `<h2>次に対応すること</h2>${items.length ? items.map(item => `<article class="timeline-row"><b>${escapeHtml(item.title || '確認すること')}</b><span>${escapeHtml(item.reason || '')}</span></article>`).join('') : '<div class="empty-state"><p>今すぐ対応が必要なことはありません。</p><button type="button" class="secondary" data-empty-chat>相談する</button></div>'}`;
-      $('[data-empty-chat]', card)?.addEventListener('click', () => navigate('chat'));
-    } catch { card.innerHTML = '<h2>次に対応すること</h2><p class="help">いまは確認できません。入力内容は失われていません。</p>'; }
+      const response = await fetch('/api/today/digest');
+      if (!response.ok) throw new Error('今日のダイジェストを取得できません');
+      const digest = await response.json();
+      const next = Array.isArray(digest.next_actions) ? digest.next_actions.slice(0, 3) : [];
+      const recent = Array.isArray(digest.recent_changes) ? digest.recent_changes.slice(0, 3) : [];
+      const remember = Array.isArray(digest.remember) ? digest.remember.slice(0, 2) : [];
+      const prompts = Array.isArray(digest.consultation_prompts) ? digest.consultation_prompts.slice(0, 3) : [];
+      const hasContent = next.length || recent.length || remember.length || prompts.length;
+      if (!hasContent) {
+        card.innerHTML = `<h2>今日のダイジェスト</h2>${digestEmpty()}`;
+        bindDigestActions(card);
+        return;
+      }
+      const rows = (items, renderer, emptyText) => items.length ? items.map(renderer).join('') : `<p class="help">${emptyText}</p>`;
+      card.innerHTML = `<section class="digest-headline"><h2>今日の一言</h2><p>${escapeHtml(digest.headline?.text || '最近の大きな変化はまだありません')}</p>${digestBasis(digest.headline)}</section><section class="digest-section"><h3>次にやること</h3>${rows(next, item => `<article class="timeline-row"><div><b>${escapeHtml(item.title || '確認すること')}</b><span class="source">${escapeHtml(item.state_label || '')}</span></div><button type="button" class="secondary" data-digest-decision="${Number(item.id)}">${escapeHtml(item.action || '確認する')}</button></article>`, '今すぐ対応が必要なことはありません。')}</section><section class="digest-section"><h3>最近変わったこと</h3>${rows(recent, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '記憶の更新')}</b><span>${escapeHtml(item.change_type || '更新')}</span>${digestBasis(item)}</article>`, '最近の変化はまだありません。')}</section><section class="digest-section"><h3>思い出しておくこと</h3>${rows(remember, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '確認済みの記録')}</b>${digestBasis(item)}</article>`, '確認できる記憶はまだありません。')}</section><section class="digest-section"><h3>相談候補</h3>${rows(prompts, item => `<button type="button" class="secondary digest-prompt" data-digest-prompt="${escapeHtml(item.text || '')}">${escapeHtml(item.text || '相談する')}</button>`, '今の記録から作れる相談候補はまだありません。')}</section>`;
+      bindDigestActions(card);
+    } catch { card.innerHTML = '<h2>今日のダイジェスト</h2><p class="help">いまはダイジェストを確認できません。入力内容は失われていません。</p>'; }
+    finally { card.removeAttribute('aria-busy'); }
   }
 
   function streamlineConsultation() {
@@ -424,7 +461,7 @@
     wireStaticSheets();
     unifyCapture();
     prepareToday();
-    refreshNextActions();
+    refreshDailyDigest();
     streamlineConsultation();
     streamlineDecisions();
     streamlineExplore();
@@ -448,4 +485,5 @@
   // Legacy inline scripts can finish their own first render after the deferred
   // bundle. Re-apply the decision renderer once the document is fully ready.
   window.addEventListener('load', streamlineDecisions, { once: true });
+  window.refreshTodayDigest = refreshDailyDigest;
 })();

@@ -7175,6 +7175,165 @@ def today_snapshot() -> dict[str, object]:
     }
 
 
+def _digest_domain_label(domain: object) -> str:
+    return {
+        "finance": "資産", "travel": "旅行", "housing": "住居", "relationship": "人間関係",
+        "work": "仕事", "health": "健康", "life": "生活", "learning": "学習",
+        "hobby": "趣味", "food": "食事", "shopping": "買い物",
+    }.get(canonical_domain(str(domain or "other")), "その他")
+
+
+def _digest_safe_text(domain: object, text: object, fallback: str) -> str:
+    """Keep the daily overview useful without exposing sensitive summaries by default."""
+    if canonical_domain(str(domain or "other")) in {"finance", "relationship", "health"}:
+        return fallback
+    return str(text or fallback)[:120]
+
+
+def today_digest() -> dict[str, object]:
+    """Return a bounded, evidence-backed daily overview without creating memory.
+
+    The response intentionally contains only confirmed Facts, explicit Decision
+    state, and recorded changes. It never treats a recommendation or inferred
+    mood as a current personal fact.
+    """
+    with db() as connection:
+        decisions = [dict(row) for row in connection.execute(
+            """SELECT id,domain,title,question,decision_state,status,result,later_evaluation,updated_at,created_at
+               FROM decisions ORDER BY COALESCE(updated_at,created_at) ASC,id ASC"""
+        )]
+        changes = [dict(row) for row in connection.execute(
+            """SELECT mc.id,mc.fact_id,mc.change_type,mc.summary,mc.created_at,f.category,f.summary AS fact_summary
+               FROM memory_changes mc LEFT JOIN facts f ON f.id=mc.fact_id
+               ORDER BY mc.created_at DESC,mc.id DESC LIMIT 18"""
+        )]
+        remembered = [dict(row) for row in connection.execute(
+            """SELECT f.id,f.category,f.summary,f.status,f.valid_from,f.effective_at,f.observed_at,f.created_at,
+                      (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count
+               FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+               WHERE r.state='confirmed' AND COALESCE(f.retrieval_eligibility,'pending')='eligible'
+                 AND f.status IN ('current','historical')
+                 AND ((SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) > 0 OR f.source_chunk_id IS NOT NULL)
+               ORDER BY CASE f.status WHEN 'current' THEN 0 ELSE 1 END,
+                        COALESCE(f.effective_at,f.observed_at,f.valid_from,f.created_at) DESC,f.id DESC LIMIT 12"""
+        )]
+
+    action_priority = {"executed": 0, "decided": 1, "candidate": 2, "considered": 2, "result": 3}
+    action_copy = {
+        "executed": ("結果を記録する", "結果待ち"),
+        "decided": ("実行する", "実行待ち"),
+        "candidate": ("判断を進める", "判断待ち"),
+        "considered": ("判断を進める", "判断待ち"),
+        "result": ("振り返る", "後日評価待ち"),
+    }
+    next_actions: list[dict[str, object]] = []
+    for row in decisions:
+        state = str(row.get("decision_state") or "").lower()
+        if state == "result" and str(row.get("later_evaluation") or "").strip():
+            continue
+        if state not in action_priority:
+            continue
+        action, state_label = action_copy[state]
+        title = _digest_safe_text(row.get("domain"), row.get("title") or row.get("question"), f"{_digest_domain_label(row.get('domain'))}の判断")
+        next_actions.append({
+            "kind": "decision", "id": row["id"], "title": title, "action": action, "state_label": state_label,
+            "domain": canonical_domain(str(row.get("domain") or "other")), "updated_at": row.get("updated_at") or row.get("created_at"),
+            "basis": [{"kind": "decision", "id": row["id"]}], "_priority": action_priority[state],
+        })
+    next_actions.sort(key=lambda item: (int(item["_priority"]), str(item.get("updated_at") or ""), int(item["id"])))
+    for item in next_actions:
+        item.pop("_priority", None)
+
+    recent_changes: list[dict[str, object]] = []
+    seen_change_facts: set[int] = set()
+    for row in changes:
+        fact_id = row.get("fact_id")
+        if fact_id and int(fact_id) in seen_change_facts:
+            continue
+        if fact_id:
+            seen_change_facts.add(int(fact_id))
+        domain = canonical_domain(str(row.get("category") or "other"))
+        domain_label = _digest_domain_label(domain)
+        summary = _digest_safe_text(domain, row.get("fact_summary") or row.get("summary"), f"{domain_label}の記録が更新されました")
+        if domain in {"finance", "relationship", "health"}:
+            summary = f"{domain_label}の記録が更新されました"
+        recent_changes.append({
+            "kind": "fact_change", "id": row["id"], "fact_id": fact_id, "domain": domain,
+            "text": summary, "change_type": row.get("change_type") or "updated", "occurred_at": row.get("created_at"),
+            "basis": [{"kind": "fact", "id": fact_id}] if fact_id else [],
+        })
+        if len(recent_changes) == 3:
+            break
+    if len(recent_changes) < 3:
+        used_decisions = {item["id"] for item in next_actions}
+        for row in reversed(decisions):
+            if row["id"] in used_decisions:
+                continue
+            state = str(row.get("decision_state") or "")
+            if not state:
+                continue
+            domain = canonical_domain(str(row.get("domain") or "other"))
+            recent_changes.append({
+                "kind": "decision_change", "id": row["id"], "domain": domain,
+                "text": f"{_digest_safe_text(domain, row.get('title') or row.get('question'), f'{_digest_domain_label(domain)}の判断')} が更新されました",
+                "change_type": state, "occurred_at": row.get("updated_at") or row.get("created_at"),
+                "basis": [{"kind": "decision", "id": row["id"]}],
+            })
+            if len(recent_changes) == 3:
+                break
+
+    # Rotate confirmed, evidence-backed memories by date so a static record
+    # does not occupy the same spot forever while avoiding a random UI.
+    remember: list[dict[str, object]] = []
+    if remembered:
+        rotation = datetime.now().date().toordinal() % len(remembered)
+        for row in (remembered[rotation:] + remembered[:rotation]):
+            domain = canonical_domain(str(row.get("category") or "other"))
+            label = _digest_safe_text(domain, row.get("summary"), f"{_digest_domain_label(domain)}に関する確認済みの記録")
+            if domain in {"finance", "relationship", "health"}:
+                label = f"{_digest_domain_label(domain)}に関する確認済みの記録があります"
+            remember.append({
+                "kind": "fact", "id": row["id"], "domain": domain, "text": label,
+                "occurred_at": row.get("effective_at") or row.get("observed_at") or row.get("valid_from") or row.get("created_at"),
+                "basis": [{"kind": "fact", "id": row["id"]}],
+            })
+            if len(remember) == 2:
+                break
+
+    domains = [item["domain"] for item in recent_changes if item.get("domain") not in {"other", ""}]
+    result_waiting = sum(1 for item in next_actions if item["state_label"] == "結果待ち")
+    if result_waiting:
+        headline = f"今週は{result_waiting}件の判断が結果待ちです"
+        headline_basis = [item["basis"][0] for item in next_actions if item["state_label"] == "結果待ち"]
+    elif len(set(domains)) >= 2:
+        labels = [_digest_domain_label(domain) for domain in dict.fromkeys(domains)]
+        headline = f"最近は{labels[0]}と{labels[1]}に関する記録が更新されています"
+        headline_basis = [item["basis"][0] for item in recent_changes[:2] if item["basis"]]
+    elif recent_changes:
+        headline = "最近の記録に更新があります"
+        headline_basis = [item["basis"][0] for item in recent_changes if item["basis"]]
+    else:
+        headline = "最近の大きな変化はまだありません"
+        headline_basis = []
+
+    available_domains = {canonical_domain(str(row.get("category") or "other")) for row in remembered}
+    available_domains.update(canonical_domain(str(row.get("domain") or "other")) for row in decisions)
+    prompt_catalog = (
+        ("travel", "次の旅行候補を整理する"),
+        ("housing", "住居更新前に希望条件を見直す"),
+        ("finance", "最近の資産変化を振り返る"),
+    )
+    consultation_prompts = [
+        {"domain": domain, "text": text, "basis": []}
+        for domain, text in prompt_catalog if domain in available_domains
+    ][:3]
+    return {
+        "headline": {"text": headline, "basis": headline_basis[:3], "period": "recent"},
+        "next_actions": next_actions[:3], "recent_changes": recent_changes[:3], "remember": remember[:2],
+        "consultation_prompts": consultation_prompts,
+    }
+
+
 def configured_access_password() -> str:
     return os.environ.get("PERSONAL_OS_ACCESS_PASSWORD", "")
 
@@ -7787,6 +7946,8 @@ class Handler(BaseHTTPRequestHandler):
                 "environment": APP_ENV,
                 "database": str(DB_PATH),
             })
+        if path == "/api/today/digest":
+            return self.send_json(today_digest())
         if path == "/api/today":
             return self.send_json(today_snapshot())
         cycle_match = re.fullmatch(r"/api/cycles/(\d+)", path)

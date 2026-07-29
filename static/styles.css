@@ -33,7 +33,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .mobile-bottom-nav { display: none; }
 
 /* The home/Today and consultation surfaces use the available desktop width. */
-#today-overview, #today-next-candidates, #today-cycle-summary { max-width: none; }
+#today-overview, #today-digest, #today-next-candidates, #today-cycle-summary { max-width: none; }
 .today-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .today-layout, .chat-layout { display: grid; gap: 16px; }
 .today-layout { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); }
@@ -66,6 +66,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .timeline-row { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--line); }
 .timeline-row:first-of-type { border-top: 0; }
 .timeline-row span { color: var(--muted); font-size: .88rem; }
+.today-digest { display: grid; gap: 18px; }
+.today-digest section { min-width: 0; }
+.today-digest h2, .today-digest h3 { margin-bottom: 8px; }
+.digest-headline p { margin: 0; font-size: 1.08rem; }
+.digest-section .timeline-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.digest-section .timeline-row > div { min-width: 0; }
+.digest-section .timeline-row > button { min-height: 44px; }
+.digest-basis { grid-column: 1 / -1; }
+.digest-prompt { min-height: 44px; margin: 4px 8px 4px 0; }
 .empty-state { padding: 12px 0; color: var(--muted); }
 .consultation-examples { margin: 8px 0 0; }
 .consultation-missing { margin: 14px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #101716; }
@@ -83,7 +92,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 form[data-submitting="true"] { opacity: .88; }
 
 /* Keep the day-to-day page focused; management cards remain reachable via admin nav. */
-#today > section.card:not(#today-daily-actions):not(#today-overview):not(#today-next-actions):not(#today-next-candidates):not(#today-cycle-summary) { display: none; }
+#today > section.card:not(#today-daily-actions):not(#today-digest):not(#today-overview):not(#today-next-actions):not(#today-next-candidates):not(#today-cycle-summary) { display: none; }
 #today-ask-form, #recommendation-panel { display: none !important; }
 .cycle-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .cycle-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 10px 0; background: #12201d; }
@@ -120,6 +129,9 @@ form[data-submitting="true"] { opacity: .88; }
   .mobile-bottom-nav button.active, .mobile-bottom-nav .mobile-nav-plus { color: #072318; background: var(--accent); }
   .mobile-bottom-nav .mobile-nav-plus { width: 52px; height: 52px; justify-self: center; border-radius: 50%; font-size: 1.6rem; line-height: 1; }
   .today-grid { grid-template-columns: 1fr; }
+  .digest-section .timeline-row { grid-template-columns: 1fr; }
+  .digest-section .timeline-row > button { width: 100%; }
+  .digest-prompt { width: 100%; margin-right: 0; }
   .cycle-track { grid-template-columns: repeat(5, minmax(50px, 1fr)); overflow: hidden; }
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .row, .domain-grid { grid-template-columns: 1fr; }

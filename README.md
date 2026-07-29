@@ -13,6 +13,7 @@ All public screenshots use fixed synthetic verification data only.
 See [UX Phase 5 Visual Review](docs/ux_phase5_visual_review.md) for the review conditions and representative screens.
 See [the Phase 5 final remediation record](docs/ux_phase5_final_remediation.md) for synthetic-data safeguards, explicit screenshot approval, and reproducible E2E commands.
 See [the Phase A stability record](docs/phase_a_stability.md) for isolated browser journeys, timeout handling, Chromium verification, and benchmark comparison safeguards.
+See [the daily digest record](docs/daily_digest.md) for the evidence-backed Today overview and its non-mutating consultation entry points.
 
 ## Rebuild additions (2026-07-26)
 
@@ -155,7 +156,7 @@ python tools/benchmark_retrieval.py --db data/verification/personal_os_verificat
 
 ## 画面
 
-起動後は「今日」を入口に、現在の資産・住居・旅行・判断待ちを確認します。記憶状況、取込、設定、チェックイン、質問セットなどの日常管理ではない機能は、画面上部の「その他の機能」から開きます。
+起動後は「今日」を入口に、現在の資産・住居・旅行・判断待ちと、確認済みの記録から作る短いパーソナルダイジェストを確認します。ダイジェストは「今日の一言」「次にやること」「最近変わったこと」「思い出しておくこと」「相談候補」の順で表示し、AIの推測をFactとして保存しません。記憶状況、取込、設定、チェックイン、質問セットなどの日常管理ではない機能は、画面上部の「その他の機能」から開きます。
 
 - Today: 現在の資産・住居・旅行情報、判断待ち、最近のメモリ更新
 - Memory: 原文の記録と AI 抽出

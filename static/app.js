@@ -105,6 +105,7 @@
     if (canonical === 'verify' && typeof refreshFactReview === 'function') refreshFactReview();
     if (canonical === 'today' && typeof refreshToday === 'function') refreshToday();
     if (canonical === 'today') refreshTodayCycleSummary();
+    if (canonical === 'today' && typeof window.refreshTodayDigest === 'function') window.refreshTodayDigest();
     if (canonical === 'settings' && typeof refreshSettings === 'function') refreshSettings();
     const renderDomain = window.personalOsRenderDomain || window.refreshDomain;
     if (['money', 'travel', 'housing', 'people'].includes(canonical) && typeof renderDomain === 'function') renderDomain(canonical);
@@ -247,7 +248,7 @@
       // The legacy Today refresh still owns historical cards. Keep only the
       // read-only overview/candidate/summary projections in the daily view.
       today.querySelectorAll(':scope > section.card').forEach(section => {
-        const keep = ['today-daily-actions', 'today-overview', 'today-next-actions', 'today-next-candidates', 'today-cycle-summary'].includes(section.id);
+        const keep = ['today-daily-actions', 'today-digest', 'today-overview', 'today-next-actions', 'today-next-candidates', 'today-cycle-summary'].includes(section.id);
         if (!keep) section.hidden = true;
       });
     }

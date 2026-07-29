@@ -17,4 +17,14 @@
 - `static/index.html` のToday候補更新はカード参照を自前で初期化し、`ReferenceError` を起こさない。
 - `static/service-worker.js` は `personal-os-v3-daily-ux-phase5` とし、今回の画面資産を旧キャッシュから分離する。
 - 結果・後日評価の通常導線にBrowserの `prompt()` を使わない。
+
+## Phase B-1: 今日のパーソナルダイジェスト
+
+| 要件 | 実装 | 検証 | 状態 |
+|---|---|---|---|
+| 事実ベースの今日の一言 | `today_digest()` / `GET /api/today/digest` | `test_today_digest.py` | Done |
+| 次にやることを最大3件・優先順で表示 | `executed → decided → candidate/considered → result` のProjection | Backend unit test / Desktop Browser E2E | Done |
+| 最近の変化・思い出しておくこと | `memory_changes` とEvidence付きconfirmed Factを最大3/2件に制限 | Backend unit test | Done |
+| 相談候補は自動送信しない | `data-digest-prompt` が相談入力欄だけをprefill | Mobile Browser E2E | Done |
+| Empty State | `today_digest()` の空Projectionと記録導線 | Backend unit test / Browser E2E | Done |
 - 相談の不足情報は最大3件で、Factを自動作成しない。

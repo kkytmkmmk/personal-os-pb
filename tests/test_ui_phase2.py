@@ -37,7 +37,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-phase5-final-1", self.sw)
+        self.assertIn("personal-os-v3-phaseb-digest-1", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
@@ -106,7 +106,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("window.personalOsSheets", self.daily_ux)
         self.assertIn("focusableIn", self.daily_ux)
         self.assertIn("classList.add('sheet-open')", self.daily_ux)
-        self.assertIn("personal-os-v3-phase5-final-1", self.sw)
+        self.assertIn("personal-os-v3-phaseb-digest-1", self.sw)
 
     def test_capture_only_confirms_after_response_and_domain_renderer_is_shared(self):
         self.assertIn("保存しています…", self.daily_ux)
@@ -121,6 +121,19 @@ class UiPhase2StaticTests(unittest.TestCase):
 
     def test_today_candidate_refresh_owns_its_card_reference(self):
         self.assertIn("let card = document.querySelector('#today-next-candidates');", self.index)
+
+    def test_daily_digest_uses_a_dedicated_api_and_never_auto_sends(self):
+        self.assertIn("/api/today/digest", self.daily_ux)
+        self.assertIn("id = 'today-digest'", self.daily_ux)
+        self.assertIn("今日の一言", self.daily_ux)
+        self.assertIn("次にやること", self.daily_ux)
+        self.assertIn("最近変わったこと", self.daily_ux)
+        self.assertIn("思い出しておくこと", self.daily_ux)
+        self.assertIn("相談候補", self.daily_ux)
+        self.assertIn("data-digest-prompt", self.daily_ux)
+        self.assertIn("input.value = prompt", self.daily_ux)
+        self.assertNotIn("chat-form').requestSubmit", self.daily_ux)
+        self.assertIn("today-digest", self.app_js)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import sqlite3
 import shutil
 import socket
 import subprocess
@@ -341,9 +342,50 @@ def load_demo_benchmark(page: Any) -> None:
         raise E2EFailure(f"synthetic benchmark demo did not render: {text[:300]!r}") from error
 
 
+def verify_daily_digest(page: Any, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int], *, mobile: bool) -> None:
+    """Exercise the real digest API and its non-mutating primary actions."""
+    route(page, "today")
+    page.locator("#today-digest").wait_for(state="visible", timeout=5000)
+    page.locator("#today-digest .digest-headline").wait_for(state="visible", timeout=5000)
+    if page.locator("#today-digest [data-digest-decision]").count() == 0:
+        raise E2EFailure("synthetic daily digest did not render an actionable decision")
+    screenshot(page, directory, manifest, f"{prefix}-today-digest", "#today", "daily-digest", viewport)
+    if mobile:
+        prompt = page.locator("#today-digest [data-digest-prompt]").first
+        if prompt.count() == 0:
+            raise E2EFailure("synthetic daily digest did not render a consultation prompt")
+        expected = prompt.inner_text()
+        prompt.click()
+        page.locator("#chat").wait_for(state="visible")
+        page.wait_for_function("expected => document.querySelector('#chat-message')?.value === expected", arg=expected, timeout=3000)
+        if page.locator("#chat-message").input_value() != expected:
+            raise E2EFailure("daily digest did not prefill the selected consultation prompt")
+        if page.locator("#chat-answer").inner_text().strip():
+            raise E2EFailure("daily digest consultation prompt was sent automatically")
+    else:
+        page.locator("#today-digest [data-digest-decision]").first.click()
+        page.locator("#decisions").wait_for(state="visible")
+
+
+def verify_empty_daily_digest(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int]) -> None:
+    """Use only the current synthetic SQLite database to exercise the empty state."""
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE facts SET status='excluded'")
+        connection.execute("DELETE FROM memory_changes")
+        connection.execute("DELETE FROM decisions")
+    route(page, "today")
+    page.locator("#today-digest .empty-state").wait_for(state="visible", timeout=5000)
+    if page.locator("#today-digest").inner_text().find("まだ今日のダイジェストを作れる記録がありません") < 0:
+        raise E2EFailure("daily digest empty state did not explain the next step")
+    screenshot(page, directory, manifest, f"{prefix}-today-digest-empty", "#today", "daily-digest-empty", viewport)
+    page.locator("#today-digest [data-digest-record]").click()
+    page.locator("#home").wait_for(state="visible")
+
+
 def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "desktop-1280" if viewport[0] == 1280 else "desktop-1440"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
+    verify_daily_digest(page, directory, manifest, prefix, viewport, mobile=False)
     route(page, "home"); screenshot(page, directory, manifest, f"{prefix}-memory", "#memory", "default", viewport)
     if verify_persistence:
         record_success(page)
@@ -398,6 +440,8 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
 def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "mobile-390" if viewport[0] == 390 else "mobile-375"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
+    verify_daily_digest(page, directory, manifest, prefix, viewport, mobile=True)
+    route(page, "today")
     screenshot(page, directory, manifest, f"{prefix}-bottom-nav", "#today", "bottom-navigation", viewport)
     page.locator("[data-action='quick']").click(); page.locator("#quick-sheet").wait_for(state="visible")
     screenshot(page, directory, manifest, f"{prefix}-quick-sheet", "#today", "quick-sheet", viewport)
@@ -456,9 +500,11 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
     # viewports plus one representative of the secondary sizes.
     public_names = {
         "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
+        "desktop-1280-today-digest.png",
         "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
         "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png",
         "mobile-390-today.png", "mobile-390-memory.png", "mobile-390-memory-image.png",
+        "mobile-390-today-digest.png",
         "mobile-390-chat-result.png", "mobile-390-decisions.png", "mobile-390-decision-result-sheet.png",
         "mobile-390-more-sheet.png", "mobile-390-explore-space.png", "mobile-390-benchmark.png",
         "desktop-1440-today.png", "mobile-375-today.png",
@@ -553,6 +599,9 @@ def main() -> int:
                     page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
                     if mobile: mobile_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))
                     else: desktop_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (1280, 720))
+                if args.viewport_set == "primary":
+                    prefix = "mobile-390" if mobile else "desktop-1280"
+                    verify_empty_daily_digest(page, database, run_dir, manifest, prefix, first)
                 context.close()
             # The timeout journey is covered by the default browser suite.
             # Playwright Chromium separately exercises the full persistence
