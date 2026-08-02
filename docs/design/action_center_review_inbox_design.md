@@ -1,6 +1,6 @@
-# Action Center / Review Inbox Design（未実装案）
+# Action Center / Review Inbox Design
 
-この文書は実現方式案であり、機能の実装済みを示さない。満たすべき状態は[要件正本](../../requirements/12_daily_action_review_inbox_requirements.md)、合格条件は[Acceptance](../acceptance/action_center_review_inbox_acceptance.md)を参照する。
+この文書は現在の実現方式を示す。満たすべき状態は[要件正本](../../requirements/12_daily_action_review_inbox_requirements.md)、合格条件は[Acceptance](../acceptance/action_center_review_inbox_acceptance.md)を参照する。
 
 ## 1. Domain Boundary
 
@@ -71,3 +71,31 @@ Public Snapshot・Fixture・ScreenshotはSynthetic Dataのみとする。Product
 ## 7. 将来拡張
 
 Personal Inferenceを確認対象へ追加する場合は、Fact確認Inboxへ無条件に混在させず、別Bucketまたは別画面を要件化する。
+
+## 8. Startup MigrationとMaintenance
+
+`initialize()`は既存DBで最初に`schema_migrations`を保証し、軽量で冪等なMigrationを実行してから、必須Tableと`015_action_center_review_inbox_stabilization`を検証する。`PERSONAL_OS_RUN_STARTUP_MAINTENANCE=false`が省略するのは全件Backfill・再監査・再解析・Embedding再生成等だけであり、Table・Column・Index・Migration markerの作成は省略しない。Migration 015はQueue metadataとIndexだけを追加し、Fact本文とReview状態を更新しない。
+
+## 9. Review State Transition
+
+| 現在 | 操作 | 保存状態 | Queue metadata |
+|---|---|---|---|
+| pending | 1日・1週間 | pending | `snoozed_until`だけ更新 |
+| pending | 期限なし | deferred | `snoozed_until=NULL` |
+| pending/deferred | 正しい・違う | confirmed/rejected | 削除 |
+| deferred | 確認再開 | pending | 削除 |
+| pending snoozed | Snooze解除 | pending | 削除 |
+
+`confirmed`と`rejected`は終端状態とし、同じ終端状態の再送だけを冪等成功として許可する。異なる終端状態への変更、終端状態の再開、deferredから直接の有限Snoozeは400とする。一時Snooze、期限なし保留、再開では元の`reason`、`review_note`、`reviewed_at`を保持する。
+
+## 10. Evidence Detail
+
+一覧ProjectionはEvidence本文、値、Document title、Extractor、Promptを含めない。通常Factは「根拠を見る」の初回`toggle`、Sensitive Factは「内容を確認する」の明示操作で詳細APIを取得する。詳細は`private, no-store`で返し、技術詳細を入れ子の閉じた`details`へ分離する。同一Cardの取得Promiseを共有し、Review完了、Tab変更、Reload、Sensitive詳細を閉じた時にClient Mapから破棄する。
+
+## 11. Draft v2
+
+`draft-store.js`が記録、相談、判断結果、後日評価、Feedback、画像Context、Benchmark Importを同じContractで扱う。保存失敗かつ非空を文字数に関係なく最優先とし、通常Draftは10文字以上・72時間以内だけを主Action候補にする。それ以外は削除せず再開一覧へ置く。Legacy plaintextと旧複数Field JSONは読込時にLosslessなv2 Projectionへ変換し、日時不明のDraftを主Actionへ昇格させない。
+
+## 12. Bucket QueryとCursor
+
+Fact候補はSQL CTEでUrgent priorityを算出し、指定Bucket条件を適用した後に`LIMIT`する。Memory ProposalもNormal/Deferred専用Queryで取得する。Action Centerは`bucket=urgent&limit=1`相当だけを利用する。Cursorは`bucket_rank, priority, sort_time, item_kind, id`をBase64 JSONで保持し、各Source Queryへ同じrow-value条件を適用する。件数は各BucketのCOUNT Queryで算出し、`counts_exact=true`を返す。Pythonへ全候補を読み込んでから分類しない。

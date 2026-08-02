@@ -58,14 +58,16 @@
   function addDraft(field, key) {
     if (!field) return;
     const storageKey = `personal-os-draft-${key}`;
-    const route = key === 'chat' ? 'chat' : key.startsWith('decision-') ? 'decisions' : key === 'ux-feedback' ? 'settings' : 'home';
+    const route = key === 'chat' ? 'chat' : key.startsWith('decision-') ? 'decisions' : key === 'ux-feedback' ? 'settings' : key === 'benchmark-import' ? 'explore' : 'home';
     const focus = key === 'chat' ? '#chat-message' : key === 'memo' ? '#record-text' : '';
     const read = () => {
+      if (window.PersonalOSDraftStore) return window.PersonalOSDraftStore.read(storageKey);
       const raw = sessionStorage.getItem(storageKey); if (!raw) return null;
       try { const parsed = JSON.parse(raw); return parsed && typeof parsed.body === 'string' ? parsed : { body: raw }; }
       catch { return { body: raw }; }
     };
     const write = patch => {
+      if (window.PersonalOSDraftStore) { const kind = ({ chat: 'chat', memo: 'memo', 'screenshot-context': 'image_context', 'benchmark-import': 'benchmark_import' })[key] || key; window.PersonalOSDraftStore.write(storageKey, { body: field.value, kind, route, focus, ...patch }); return; }
       const previous = read() || {};
       sessionStorage.setItem(storageKey, JSON.stringify({ version: 2, body: field.value,
         updated_at: new Date().toISOString(), save_failed: false, hidden_until: null, route, focus, ...previous, ...patch }));
@@ -77,11 +79,12 @@
 
   function clearDraftFor(form) {
     const key = form?.dataset.draftKey;
-    if (key) sessionStorage.removeItem(key);
+    if (key) { if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.clear(key); else sessionStorage.removeItem(key); }
   }
 
   function markDraftFailed(form) {
     const key = form?.dataset.draftKey; if (!key) return;
+    if (window.PersonalOSDraftStore) { window.PersonalOSDraftStore.markFailed(key); return; }
     const raw = sessionStorage.getItem(key); if (!raw) return;
     try {
       const draft = JSON.parse(raw); if (!draft || typeof draft.body !== 'string') return;
@@ -90,6 +93,7 @@
   }
 
   function markStoredDraftFailed(storageKey) {
+    if (window.PersonalOSDraftStore) { window.PersonalOSDraftStore.markFailed(storageKey); return; }
     const raw = sessionStorage.getItem(storageKey); if (!raw) return;
     try { const draft = JSON.parse(raw); if (draft && typeof draft.body === 'string') { draft.save_failed = true; draft.hidden_until = null; sessionStorage.setItem(storageKey, JSON.stringify(draft)); } }
     catch { /* Legacy drafts remain restorable but are not promoted. */ }
@@ -375,12 +379,16 @@
     form.dataset.ready = 'true';
     const body = $('#ux-feedback-body', sheet), expected = $('#ux-feedback-expected', sheet);
     const draftKey = 'personal-os-draft-ux-feedback';
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(draftKey) || '{}');
-      if (saved.body) body.value = saved.body;
-      if (saved.expected) expected.value = saved.expected;
-    } catch { /* ignore corrupt local draft */ }
-    const saveDraft = () => sessionStorage.setItem(draftKey, JSON.stringify({ body: body.value, expected: expected.value }));
+    const restoreDraft = () => { try {
+      const saved = window.PersonalOSDraftStore?.read(draftKey) || JSON.parse(sessionStorage.getItem(draftKey) || '{}');
+      if (saved?.body) body.value = saved.body;
+      if (saved?.fields?.expected || saved?.expected) expected.value = saved.fields?.expected || saved.expected;
+    } catch { /* ignore corrupt local draft */ } };
+    restoreDraft();
+    const saveDraft = () => {
+      if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.write(draftKey, { kind: 'ux_feedback', body: body.value, fields: { expected: expected.value }, save_failed: false, hidden_until: null, route: 'settings', focus: '#ux-feedback-body' });
+      else sessionStorage.setItem(draftKey, JSON.stringify({ body: body.value, expected: expected.value }));
+    };
     body.addEventListener('input', saveDraft); expected.addEventListener('input', saveDraft);
     const renderList = async () => {
       const list = $('#ux-feedback-list', sheet); if (!list) return;
@@ -389,7 +397,7 @@
         list.innerHTML = rows.length ? `<h3>最近の記録</h3>${rows.slice(0, 5).map(row => `<article class="feedback-item"><b>${escapeHtml({ improvement: '使いにくい', bug: '動作がおかしい', confusing: '分かりにくい', praise: '良かった' }[row.feedback_type] || '気づき')}</b><span class="pill">${escapeHtml({ low: '低', medium: '中', high: '高' }[row.severity] || '中')}</span><p>${escapeHtml(row.body)}</p><p class="meta">${escapeHtml(row.screen)} ・ ${escapeHtml(row.created_at || '')}</p></article>`).join('')}` : '<p class="help">まだ記録はありません。</p>';
       } catch { list.innerHTML = '<p class="help">記録を読み込めませんでした。</p>'; }
     };
-    window.personalOsOpenFeedback = opener => { closeSheet(opener?.closest?.('.ui-sheet')); openSheet('ux-feedback-sheet', opener); renderList(); };
+    window.personalOsOpenFeedback = opener => { restoreDraft(); closeSheet(opener?.closest?.('.ui-sheet')); openSheet('ux-feedback-sheet', opener); renderList(); };
     document.querySelectorAll('[data-action="ux-feedback"]').forEach(button => button.addEventListener('click', () => window.personalOsOpenFeedback(button)));
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -400,8 +408,8 @@
         const response = await fetch('/api/ux-feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || '記録できませんでした');
-        form.reset(); sessionStorage.removeItem(draftKey); notice.textContent = 'この端末のPersonal OSに記録しました。'; renderList();
-      } catch (error) { notice.textContent = error.message || '記録できませんでした。入力は保持しています。'; }
+        form.reset(); if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.clear(draftKey); else sessionStorage.removeItem(draftKey); notice.textContent = 'この端末のPersonal OSに記録しました。'; renderList();
+      } catch (error) { if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.markFailed(draftKey, { body: body.value, fields: { expected: expected.value } }); notice.textContent = error.message || '記録できませんでした。入力は保持しています。'; }
       finally { submit.disabled = false; }
     });
     $('#ux-feedback-copy', sheet)?.addEventListener('click', async () => {
@@ -456,14 +464,19 @@
       form.dataset.decisionId = String(id); form.dataset.mode = mode;
       const draftKey = `personal-os-draft-decision-${id}-${mode}`;
       const saved = sessionStorage.getItem(draftKey);
-      if (saved) { try { const data = JSON.parse(saved); $('#decision-outcome-text', sheet).value = data.text || ''; $('#decision-outcome-good', sheet).value = data.good || ''; $('#decision-outcome-next', sheet).value = data.next || ''; $('#decision-outcome-score', sheet).value = data.score || ''; } catch { /* ignore corrupt local draft */ } }
+      if (saved) { try { const data = window.PersonalOSDraftStore?.read(draftKey) || JSON.parse(saved); const fields = data.fields || data; $('#decision-outcome-text', sheet).value = data.body || data.text || ''; $('#decision-outcome-good', sheet).value = fields.good || ''; $('#decision-outcome-next', sheet).value = fields.next || ''; $('#decision-outcome-score', sheet).value = fields.score || ''; } catch { /* ignore corrupt local draft */ } }
       form.dataset.draftKey = draftKey; openSheet(sheet.id, document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
     };
     window.recordDecisionResult = id => openOutcome(id, 'result');
     window.evaluateDecision = id => openOutcome(id, 'evaluate');
     window.personalOsOpenDecisionOutcome = openOutcome;
     const sheet = outcomeSheet(), form = $('#decision-outcome-form', sheet);
-    ['#decision-outcome-text','#decision-outcome-good','#decision-outcome-next','#decision-outcome-score'].forEach(selector => $(selector, sheet)?.addEventListener('input', () => sessionStorage.setItem(form.dataset.draftKey || '', JSON.stringify({ text: $('#decision-outcome-text', sheet).value, good: $('#decision-outcome-good', sheet).value, next: $('#decision-outcome-next', sheet).value, score: $('#decision-outcome-score', sheet).value }))));
+    ['#decision-outcome-text','#decision-outcome-good','#decision-outcome-next','#decision-outcome-score'].forEach(selector => $(selector, sheet)?.addEventListener('input', () => {
+      const key = form.dataset.draftKey || ''; if (!key) return;
+      const fields = { good: $('#decision-outcome-good', sheet).value, next: $('#decision-outcome-next', sheet).value, score: $('#decision-outcome-score', sheet).value };
+      if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.write(key, { kind: form.dataset.mode === 'evaluate' ? 'decision_evaluation' : 'decision_result', body: $('#decision-outcome-text', sheet).value, fields, target_id: Number(form.dataset.decisionId), mode: form.dataset.mode, save_failed: false, hidden_until: null, route: 'decisions', focus: '#decision-outcome-text' });
+      else sessionStorage.setItem(key, JSON.stringify({ text: $('#decision-outcome-text', sheet).value, ...fields }));
+    }));
     form.addEventListener('submit', async event => {
       event.preventDefault();
       const id = form.dataset.decisionId, mode = form.dataset.mode, text = $('#decision-outcome-text', sheet).value.trim();
@@ -473,8 +486,8 @@
       const payload = mode === 'evaluate' ? { later_evaluation: value, status: 'revisited' } : { result: value };
       const response = await fetch(`/api/decisions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const notice = $('#decision-outcome-notice', sheet);
-      if (!response.ok) { notice.textContent = '保存できませんでした。入力内容は保持しています。'; return; }
-      notice.textContent = '保存しました。'; sessionStorage.removeItem(form.dataset.draftKey || ''); form.reset(); closeSheet(sheet);
+      if (!response.ok) { if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.markFailed(form.dataset.draftKey || '', { body: text, fields: { good: $('#decision-outcome-good', sheet).value, next, score } }); notice.textContent = '保存できませんでした。入力内容は保持しています。'; return; }
+      notice.textContent = '保存しました。'; if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.clear(form.dataset.draftKey || ''); else sessionStorage.removeItem(form.dataset.draftKey || ''); form.reset(); closeSheet(sheet);
       window.refreshDecisions?.(); window.refreshToday?.(); announce('判断の結果を保存しました');
     });
     const decisionState = item => {

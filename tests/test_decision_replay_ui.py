@@ -26,7 +26,7 @@ class DecisionReplayUiTests(unittest.TestCase):
 
     def test_service_worker_cache_is_refreshed_for_b3(self):
         worker = (ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
-        self.assertIn('personal-os-v3-phase-b-ux1-stabilization-3', worker)
+        self.assertIn('personal-os-v3-phase-b-ux1-stabilization-4', worker)
 
 
 if __name__ == "__main__":

@@ -273,6 +273,9 @@
   }
 
   function wireDrafts() {
+    // Daily UX owns the shared Draft v2 contract when available.  Keeping the
+    // legacy plaintext writer active would downgrade v2 objects on every keypress.
+    if (window.PersonalOSDraftStore) return;
     Object.entries(draftFields).forEach(([key, selector]) => {
       const field = $(selector); if (!field) return;
       const storageKey = `personal-os-draft-${key}`;

@@ -38,7 +38,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-phase-b-ux1-stabilization-3", self.sw)
+        self.assertIn("personal-os-v3-phase-b-ux1-stabilization-4", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
@@ -107,7 +107,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("window.personalOsSheets", self.daily_ux)
         self.assertIn("focusableIn", self.daily_ux)
         self.assertIn("classList.add('sheet-open')", self.daily_ux)
-        self.assertIn("personal-os-v3-phase-b-ux1-stabilization-3", self.sw)
+        self.assertIn("personal-os-v3-phase-b-ux1-stabilization-4", self.sw)
 
     def test_capture_only_confirms_after_response_and_domain_renderer_is_shared(self):
         self.assertIn("保存しています…", self.daily_ux)

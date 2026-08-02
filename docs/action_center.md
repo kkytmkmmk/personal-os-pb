@@ -21,7 +21,7 @@ Server側の順位は `action_center_projection()` を正本とし、`GET /api/a
 
 ## Draftと保存失敗
 
-記録・相談・判断結果・後日評価・Feedbackの入力途中データは、本文・更新日時・保存失敗・非表示期限・遷移先を持つDraft v2として `sessionStorage` に保持します。保存失敗を最優先、続いて72時間以内かつ10文字以上のDraftを表示します。短いDraft、72時間超、未来の`hidden_until`、更新日時不明のlegacy Draftは主Actionにしません。7日以上のDraftとlegacy Draftは再開一覧から復元できます。「今回は表示しない」は1日だけ隠し、「破棄」は確認後にだけ削除します。成功応答を受け取った場合だけDraftを削除します。
+記録・相談・判断結果・後日評価・Feedbackの入力途中データは、`version`、`kind`、`body`、種類別`fields`、`updated_at`、`save_failed`、`hidden_until`、`route`、`focus`を持つ共通Draft v2として `sessionStorage` に保持します。対象がある場合は`target_id`と`mode`も保持します。保存失敗は空白以外1文字以上なら最優先、通常Draftは72時間以内かつ10文字以上だけを主Actionにします。72時間超、7日以上、未来の`hidden_until`、更新日時不明のlegacy Draftは主Actionにせず、すべて再開一覧から復元できます。判断Draftは対象の結果・後日評価Sheet、Feedback DraftはFeedback Sheetを直接再開します。「今回は表示しない」は1日だけ隠し、「破棄」は確認後にだけ削除します。成功応答を受け取った場合だけDraftを削除します。
 
 ## 表示理由と延期
 

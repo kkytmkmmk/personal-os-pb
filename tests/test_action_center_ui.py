@@ -13,6 +13,7 @@ class ActionCenterUiStaticTests(unittest.TestCase):
         cls.js = (ROOT / "static" / "action-center.js").read_text(encoding="utf-8")
         cls.css = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
         cls.worker = (ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+        cls.drafts = (ROOT / "static" / "draft-store.js").read_text(encoding="utf-8")
 
     def test_action_center_bundle_is_loaded(self):
         self.assertIn('<script src="/action-center.js" defer></script>', self.index)
@@ -31,8 +32,8 @@ class ActionCenterUiStaticTests(unittest.TestCase):
 
     def test_client_draft_has_priority_hook(self):
         self.assertIn('clientDraftAction() || data.top_action', self.js)
-        self.assertIn('personal-os-draft-memo', self.js)
-        self.assertIn('personal-os-draft-chat', self.js)
+        self.assertIn('personal-os-draft-memo', self.drafts)
+        self.assertIn('personal-os-draft-chat', self.drafts)
 
     def test_review_inbox_uses_deterministic_api(self):
         self.assertIn('/api/review-inbox?', self.js)
@@ -61,8 +62,9 @@ class ActionCenterUiStaticTests(unittest.TestCase):
         self.assertIn("review: '週次レビュー'", self.app_js)
 
     def test_service_worker_uses_required_cache_version(self):
-        self.assertIn('personal-os-v3-phase-b-ux1-stabilization-3', self.worker)
+        self.assertIn('personal-os-v3-phase-b-ux1-stabilization-4', self.worker)
         self.assertIn('/action-center.js', self.worker)
+        self.assertIn('/draft-store.js', self.worker)
 
     def test_inbox_uses_ten_item_pages_and_explicit_presentation(self):
         self.assertIn("limit: '10'", self.js)
@@ -74,10 +76,20 @@ class ActionCenterUiStaticTests(unittest.TestCase):
         self.assertIn('今日はここまで', self.js)
 
     def test_draft_v2_has_required_metadata(self):
-        daily = (ROOT / "static" / "daily-ux.js").read_text(encoding="utf-8")
-        for field in ('updated_at', 'save_failed', 'hidden_until', 'route', 'focus'):
-            self.assertIn(field, daily)
+        for field in ('version', 'kind', 'body', 'updated_at', 'save_failed', 'hidden_until', 'route', 'focus'):
+            self.assertIn(field, self.drafts)
+        for kind in ('decision_result', 'decision_evaluation', 'ux_feedback'):
+            self.assertIn(kind, self.drafts)
+        self.assertIn('item.save_failed && textLength > 0', self.drafts)
+        self.assertIn('age <= MAX_PRIMARY_AGE', self.drafts)
+        self.assertIn('restore.push', self.drafts)
         self.assertNotIn('personal-os-failed-action', self.js)
+
+    def test_normal_review_evidence_is_lazy_loaded_once(self):
+        self.assertIn('data-review-evidence', self.js)
+        self.assertIn('根拠を読み込んでいます', self.js)
+        self.assertIn('detailRequests.get(key)', self.js)
+        self.assertIn('技術詳細', self.js)
 
     def test_daily_ux_delegates_today_digest(self):
         daily = (ROOT / "static" / "daily-ux.js").read_text(encoding="utf-8")

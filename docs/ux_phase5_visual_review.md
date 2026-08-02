@@ -3,10 +3,10 @@
 ## 2026-08-02 Phase B-UX1 Stabilization 最終確認
 
 - Verification環境の独立Temporary SQLite DBでDesktop/Mobile E2Eを実行し、Microsoft EdgeとPlaywright Chromiumの両方で成功した。
-- 公開候補42枚を画像として目視確認し、`codex-visual-review`が2026-08-02T08:34:41.726136+00:00に承認した。全件がSynthetic Dataで、`reviewed=true`、`contains_sensitive_data=false`、現在のPNGとSHA-256が一致している。
+- 公開候補47枚（合計3,189,527 bytes）を1枚ずつ画像として目視確認し、`codex-visual-review`が2026-08-02T12:06:21.506746+00:00に承認した。全件がSynthetic Dataで、`reviewed=true`、`contains_sensitive_data=false`、現在のPNGとSHA-256が一致している。
 - 375px幅で保存失敗Draftの3操作が窮屈だったため、「再試行する」を全幅、「今回は表示しない」と「破棄」を2列に整理した。
 - 機微情報はデフォルトで値・根拠・原文をマスクし、明示操作後の詳細と「3件確認」区切りを別Screenshotで確認した。
-- Unit Test 202件が成功（1件はHostでSymlink作成不可のためskip）、Memory Quality Benchmarkは44/44、Secret/Public/Screenshot SafetyはPASSした。
+- Unit Test 211件が成功（1件はHostでSymlink作成不可のためskip）、Memory Quality Benchmarkは44/44、Secret/Public/Screenshot SafetyはPASSした。1,100件・5,000件のReview Backlogも境界後のUrgentを欠落させず、一覧応答を10件へ抑えた。
 
 ## 実施条件
 
@@ -44,7 +44,21 @@
 
 ![Mobile 保留メニュー](screenshots/ux-phase5/mobile-390-review-snooze.png)
 
-61件以上の固定Synthetic BacklogとMemory Proposalで確認した。Todayは主Actionが1件、主Buttonが1件で、記録・相談・確認Inboxの3入口が最初のMobile Viewportに収まる。Inboxは初回10件だけを取得し、先頭1件のFocus Cardを表示する。機微候補は本文・値・原文をマスクし、初期状態には「内容を確認する」「後で」だけがある。明示表示後にだけ実Summary、値、確認操作が現れ、「内容を閉じる」で実内容がDOMから消えることをBrowser E2Eでも確認した。
+![Desktop 通常候補の根拠を閉じた状態](screenshots/ux-phase5/desktop-1280-review-normal-evidence-closed.png)
+
+![Desktop 通常候補の根拠を開いた状態](screenshots/ux-phase5/desktop-1280-review-normal-evidence-open.png)
+
+![Desktop 技術詳細](screenshots/ux-phase5/desktop-1280-review-technical-detail.png)
+
+![Mobile 保存失敗の短い下書き](screenshots/ux-phase5/mobile-390-action-center-failed-short-draft.png)
+
+![Mobile 再開できる下書き一覧](screenshots/ux-phase5/mobile-390-action-center-restorable-drafts.png)
+
+1,100件の完全Paginationと5,000件の性能検証に加え、固定Synthetic BacklogとMemory ProposalをBrowser E2Eで確認した。Todayは主Actionが1件、主Buttonが1件で、記録・相談・確認Inboxの3入口が最初のMobile Viewportに収まる。Inboxは初回10件だけを取得し、先頭1件のFocus Cardを表示する。機微候補は本文・値・原文をマスクし、初期状態には「内容を確認する」「後で」だけがある。明示表示後にだけ実Summary、値、確認操作が現れ、「内容を閉じる」で実内容がDOMから消えることをBrowser E2Eでも確認した。
+
+通常候補では、一覧にEvidence本文・Source・Modelを含めず、「根拠を見る」を初めて開いた時だけ詳細APIから取得する。取得後も技術情報は二段目の「技術詳細」に閉じた。目視では、閉じた状態・Evidence表示・技術詳細表示の3画面に情報の重複やレイアウト崩れがないことを確認した。
+
+共通Draft v2では、保存に失敗した短文が最優先Actionになり、古い・非優先・一時的に隠したDraftも「下書きを再開する」一覧から再開できる。判断結果とUX Feedbackは本文以外の補助項目も復元され、MobileのCardと操作ButtonがBottom Navigationに重ならないことを確認した。
 
 目視確認では、Mobileでも主Action・記録・相談・確認Inboxが初期Viewportに収まり、保留メニューが下部Navigationより上へ表示された。機微情報の詳細表示前後と3件区切りは、ボタンの重なり、横Overflow、実データ露出がないことを画像で確認した。通常候補はTodayを占有せず、Inboxの件数は作業完了を強制する表現にしていない。
 

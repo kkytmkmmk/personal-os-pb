@@ -18,6 +18,7 @@
   let focusPaused = false;
   const presented = new Set();
   const revealed = new Map();
+  const detailRequests = new Map();
 
   const draftRoutes = [
     [/^personal-os-draft-memo$/, 'home', '書きかけの記録を続ける', '#record-text'],
@@ -28,6 +29,7 @@
   ];
 
   function parseDraft(key) {
+    if (window.PersonalOSDraftStore) return window.PersonalOSDraftStore.read(key);
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const matched = draftRoutes.find(([pattern]) => pattern.test(key));
@@ -44,6 +46,7 @@
   }
 
   function draftCandidates() {
+    if (window.PersonalOSDraftStore) return window.PersonalOSDraftStore.candidates();
     const now = Date.now();
     const drafts = Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index) || '')
       .map(parseDraft).filter(Boolean).filter(item => item.body.trim().length >= 10);
@@ -66,10 +69,11 @@
 
   function clientDraftAction() {
     const draft = draftCandidates().eligible[0];
-    return draft ? { ...draft, kind: 'client_draft', action_label: draft.save_failed ? '再試行する' : '続ける', can_snooze: false } : null;
+    return draft ? { ...draft, draft_kind: draft.kind, kind: 'client_draft', action_label: draft.save_failed ? '再試行する' : '続ける', can_snooze: false } : null;
   }
 
   function saveDraftMetadata(draft, patch) {
+    if (window.PersonalOSDraftStore) { window.PersonalOSDraftStore.write(draft.key, patch); return; }
     sessionStorage.setItem(draft.key, JSON.stringify({ version: 2, body: draft.body, updated_at: draft.updated_at,
       save_failed: draft.save_failed, hidden_until: draft.hidden_until, route: draft.route, focus: draft.focus, ...patch }));
   }
@@ -79,7 +83,13 @@
       inboxBucket = action.bucket || 'urgent'; navigate('verify'); window.setTimeout(() => refreshReviewInbox(true), 0); return;
     }
     navigate(action.route || 'today');
-    if (action.kind === 'decision_result' || action.kind === 'decision_evaluation') {
+    if (action.kind === 'client_draft' && ['decision_result', 'decision_evaluation'].includes(action.draft_kind || '')) {
+      window.setTimeout(() => window.personalOsOpenDecisionOutcome?.(Number(action.target_id), action.mode || 'result'), 0);
+    } else if (action.kind === 'client_draft' && action.route === 'decisions' && action.target_id) {
+      window.setTimeout(() => window.personalOsOpenDecisionOutcome?.(Number(action.target_id), action.mode || 'result'), 0);
+    } else if (action.kind === 'client_draft' && action.route === 'settings') {
+      window.setTimeout(() => window.personalOsOpenFeedback?.(), 0);
+    } else if (action.kind === 'decision_result' || action.kind === 'decision_evaluation') {
       window.setTimeout(() => window.personalOsOpenDecisionReplay?.(Number(action.id), null), 0);
     } else if (action.focus) window.setTimeout(() => $(action.focus)?.focus(), 0);
   }
@@ -87,12 +97,12 @@
   function bindDraftActions(card, action) {
     if (action.kind !== 'client_draft') return;
     $('[data-draft-hide]', card)?.addEventListener('click', () => {
-      saveDraftMetadata(action, { hidden_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() });
+      if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.hide(action.key); else saveDraftMetadata(action, { hidden_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() });
       refreshActionCenter();
     });
     $('[data-draft-discard]', card)?.addEventListener('click', () => {
       if (!window.confirm('この下書きを破棄しますか？')) return;
-      sessionStorage.removeItem(action.key); refreshActionCenter();
+      if (window.PersonalOSDraftStore) window.PersonalOSDraftStore.clear(action.key); else sessionStorage.removeItem(action.key); refreshActionCenter();
     });
     $$('[data-old-draft-key]', card).forEach(button => button.addEventListener('click', () => {
       const draft = parseDraft(button.dataset.oldDraftKey || ''); if (draft) actionRoute({ ...draft, kind: 'client_draft' });
@@ -107,7 +117,7 @@
       .filter(([, count]) => Number(count) > 0).slice(0, 3);
     const draftButtons = action.kind === 'client_draft'
       ? '<button type="button" class="secondary" data-draft-hide>今回は表示しない</button><button type="button" class="secondary" data-draft-discard>破棄</button>' : '';
-    const oldDrafts = restore.length ? `<details class="old-draft-list"><summary>古い下書きを見る（${restore.length}件）</summary>${restore.slice(0, 5).map(item => `<button type="button" class="secondary" data-old-draft-key="${esc(item.key)}">${esc(item.title)}</button>`).join('')}</details>` : '';
+    const oldDrafts = restore.length ? `<details class="old-draft-list"><summary>下書きを再開する（${restore.length}件）</summary>${restore.slice(0, 10).map(item => `<button type="button" class="secondary" data-old-draft-key="${esc(item.key)}">${esc(item.title)}${item.old ? '（古い下書き）' : item.hidden ? '（非表示中）' : ''}</button>`).join('')}</details>` : '';
     card.className = 'card action-center-card';
     card.innerHTML = `<div class="action-center-kicker">次にすること</div><h2>${esc(action.title || '記録する')}</h2><p class="action-reason">${esc(action.reason || '')}</p><div class="actions action-center-buttons"><button type="button" data-action-primary>${esc(action.action_label || '開く')}</button>${draftButtons}${action.can_snooze ? '<button type="button" class="secondary" data-action-defer>後で</button>' : ''}</div><div class="action-defer-menu hidden" data-action-defer-menu><button type="button" class="secondary" data-defer-for="one_day">1日後</button><button type="button" class="secondary" data-defer-for="one_week">1週間後</button><button type="button" class="secondary" data-defer-for="indefinite">Inboxに残す</button></div>${statusItems.length ? `<div class="action-status" aria-label="現在の件数">${statusItems.map(([label, count]) => `<span><b>${Number(count)}</b>${esc(label)}</span>`).join('')}</div>` : ''}<p class="help action-inbox-link">${Number(counts.normal_reviews || 0) + Number(counts.deferred_reviews || 0) > 0 ? '通常の確認事項は確認Inboxにあります。' : '今すぐ対応する項目を1件だけ表示しています。'}</p>${oldDrafts}<div class="quick-actions"><button type="button" class="secondary" data-quick-route="home">記録する</button><button type="button" class="secondary" data-quick-route="chat">相談する</button><button type="button" class="secondary" data-quick-route="verify">確認Inbox</button></div>`;
     $('[data-action-primary]', card)?.addEventListener('click', () => actionRoute(action));
@@ -151,6 +161,17 @@
   function detailFor(item) { return revealed.get(itemKey(item)); }
   function valueLabel(item) { try { const value = JSON.parse(item.value_json || '{}'); return [value.asset, value.amount, value.currency].filter(value => value !== null && value !== undefined && value !== '').join(' ・ '); } catch { return ''; } }
 
+  function evidenceDetail(detail) {
+    const technical = detail.technical_detail || {};
+    const technicalRows = [
+      ['Fact Type', technical.fact_type], ['Validation Status', technical.validation_status],
+      ['Retrieval Eligibility', technical.retrieval_eligibility], ['Extractor', technical.extractor],
+      ['Extractor Model', technical.extractor_model], ['Prompt Version', technical.prompt_version],
+      ['Extracted At', technical.extracted_at], ['Internal ID', technical.internal_id],
+    ].filter(([, value]) => value !== null && value !== undefined && value !== '');
+    return `<p class="source">${esc(detail.document_title || '原文')} / ${esc(detail.source_created_at || '日時不明')} / Evidence ${Number(detail.evidence_count || 0)}件</p><div class="body">${esc(detail.evidence || detail.source_preview || '確認できる根拠はありません。')}</div>${technicalRows.length ? `<details class="review-technical"><summary>技術詳細</summary><dl>${technicalRows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl></details>` : ''}`;
+  }
+
   function reviewActions(item) {
     if (item.item_kind === 'memory_proposal') return item.bucket === 'deferred'
       ? '<button type="button" data-proposal-resume>確認を再開</button>'
@@ -166,7 +187,7 @@
     const heading = sensitiveHidden ? `${item.domain_label || '機微'}情報の確認候補` : (shown.summary || item.summary || '確認が必要な記憶');
     const body = sensitiveHidden
       ? '<p class="help">機微情報のため内容を隠しています。確認操作の後だけ、この画面内に表示します。</p>'
-      : `<div class="body">${esc(valueLabel(shown) || shown.summary || '')}</div><details class="review-evidence"><summary>根拠を見る</summary><p class="source">${esc(shown.document_title || '原文')} / Evidence ${Number(shown.evidence_count || 0)}件</p><div class="body">${esc(shown.evidence || shown.source_preview || '確認できる根拠はありません。')}</div></details>`;
+      : `<div class="body">${esc(valueLabel(shown) || shown.summary || '')}</div><details class="review-evidence" data-review-evidence><summary>根拠を見る</summary><div data-review-evidence-body>${detail ? evidenceDetail(detail) : '<p class="help">開くと根拠を読み込みます。</p>'}</div></details>`;
     const actions = sensitiveHidden
       ? '<button type="button" data-review-reveal>内容を確認する</button><button type="button" class="secondary" data-review-defer>後で</button>'
       : `${reviewActions(item)}${item.bucket !== 'deferred' ? '<button type="button" class="secondary" data-review-defer>後で</button>' : ''}${item.sensitive ? '<button type="button" class="secondary" data-review-close>内容を閉じる</button>' : ''}`;
@@ -185,13 +206,18 @@
   }
 
   async function completeReview() {
-    processedInFocus += 1; revealed.clear();
+    processedInFocus += 1; revealed.clear(); detailRequests.clear();
     if (processedInFocus >= 3) focusPaused = true;
     await refreshReviewInbox(true);
   }
 
   async function correctFact(item) {
-    const source = detailFor(item) || item;
+    let source = detailFor(item);
+    if (!source) {
+      const response = await api(`/api/review-inbox/${Number(item.id)}/detail${item.sensitive ? '?include_sensitive=true' : ''}`);
+      if (!response.ok) return;
+      source = await response.json(); revealed.set(itemKey(item), source);
+    }
     if (source.summary === MASKED_SUMMARY) return;
     const summary = window.prompt('正しい要約', source.summary || ''); if (summary === null) return;
     let value = {}; try { value = JSON.parse(source.value_json || '{}'); } catch { value = {}; }
@@ -202,6 +228,26 @@
   }
 
   function bindReviewCards(root) {
+    $$('[data-review-evidence]', root).forEach(details => details.addEventListener('toggle', async () => {
+      if (!details.open || details.dataset.loaded === 'true') return;
+      const card = details.closest('[data-review-id]'); const id = Number(card.dataset.reviewId); const kind = card.dataset.reviewKind;
+      const key = `${kind}:${id}`; const body = $('[data-review-evidence-body]', details);
+      const existing = revealed.get(key);
+      if (existing) { body.innerHTML = evidenceDetail(existing); details.dataset.loaded = 'true'; return; }
+      body.innerHTML = '<p class="help" aria-live="polite">根拠を読み込んでいます…</p>';
+      const path = kind === 'memory_proposal' ? `/api/review-inbox/proposals/${id}/detail` : `/api/review-inbox/${id}/detail`;
+      let request = detailRequests.get(key);
+      if (!request) {
+        request = api(path).then(async response => { if (!response.ok) throw new Error('detail'); return response.json(); });
+        detailRequests.set(key, request);
+      }
+      try {
+        const detail = await request; revealed.set(key, detail); body.innerHTML = evidenceDetail(detail); details.dataset.loaded = 'true';
+      } catch {
+        detailRequests.delete(key);
+        body.innerHTML = '<p class="help" role="alert">根拠を読み込めませんでした。候補の状態は変更されていません。</p>';
+      }
+    }));
     $$('[data-review-state]', root).forEach(button => button.addEventListener('click', async () => {
       const card = button.closest('[data-review-id]');
       const response = await api(`/api/facts/${Number(card.dataset.reviewId)}/review`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: button.dataset.reviewState }) });
@@ -215,7 +261,7 @@
       const path = kind === 'memory_proposal' ? `/api/review-inbox/proposals/${id}/detail?include_sensitive=true` : `/api/review-inbox/${id}/detail?include_sensitive=true`;
       const response = await api(path); if (!response.ok) return; revealed.set(`${kind}:${id}`, await response.json()); renderInbox();
     }));
-    $$('[data-review-close]', root).forEach(button => button.addEventListener('click', () => { const card = button.closest('[data-review-id]'); revealed.delete(`${card.dataset.reviewKind}:${Number(card.dataset.reviewId)}`); renderInbox(); }));
+    $$('[data-review-close]', root).forEach(button => button.addEventListener('click', () => { const card = button.closest('[data-review-id]'); const key = `${card.dataset.reviewKind}:${Number(card.dataset.reviewId)}`; revealed.delete(key); detailRequests.delete(key); renderInbox(); }));
     $$('[data-review-defer]', root).forEach(button => button.addEventListener('click', () => $('.review-defer-menu', button.closest('[data-review-id]'))?.classList.toggle('hidden')));
     $$('[data-review-period]', root).forEach(button => button.addEventListener('click', async () => {
       const card = button.closest('[data-review-id]');
@@ -253,7 +299,7 @@
     try {
       const query = new URLSearchParams({ bucket: inboxBucket, limit: '10' }); if (inboxDomain) query.set('domain', inboxDomain); if (!reset && inboxCursor) query.set('cursor', inboxCursor);
       const response = await api(`/api/review-inbox?${query}`); if (!response.ok) throw new Error('review-inbox'); const data = await response.json();
-      inboxItems = reset ? (data.items || []) : inboxItems.concat(data.items || []); inboxCursor = data.next_cursor || null; if (reset) revealed.clear();
+      inboxItems = reset ? (data.items || []) : inboxItems.concat(data.items || []); inboxCursor = data.next_cursor || null; if (reset) { revealed.clear(); detailRequests.clear(); }
       const counts = data.counts || {}; $('#review-inbox-counts').innerHTML = `<span><b>${Number(counts.urgent || 0)}</b> 今確認</span><span><b>${Number(counts.normal || 0)}</b> 通常</span><span><b>${Number(counts.deferred || 0)}</b> あとで</span>`;
       $('#review-inbox-list-toggle').textContent = showInboxList ? '1件ずつ確認する' : '一覧を見る'; renderInbox();
     } catch { focus.innerHTML = '<p class="help">確認Inboxを読み込めませんでした。記憶の状態は変更されていません。</p>'; }

@@ -410,7 +410,10 @@ def verify_action_center_review_inbox(page: Any, database: Path, directory: Path
 
     # Draft v2 ignores short/old content, prioritizes a failed save, and routes
     # back to the correct form without sending automatically.
-    page.evaluate("""async () => { const old=new Date(Date.now()-8*86400000).toISOString(); sessionStorage.setItem('personal-os-draft-chat',JSON.stringify({version:2,body:'short',updated_at:new Date().toISOString(),save_failed:false,hidden_until:null,route:'chat',focus:'#chat-message'})); sessionStorage.setItem('personal-os-draft-ux-feedback',JSON.stringify({version:2,body:'Synthetic old feedback draft',updated_at:old,save_failed:false,hidden_until:null,route:'settings',focus:''})); await window.refreshActionCenter?.(); }""")
+    with sqlite3.connect(database) as connection:
+        draft_decision_id = int(connection.execute("SELECT id FROM decisions ORDER BY id LIMIT 1").fetchone()[0])
+    page.evaluate("""value => { const recent=new Date().toISOString(), fourDays=new Date(Date.now()-4*86400000).toISOString(), old=new Date(Date.now()-8*86400000).toISOString(); window.PersonalOSDraftStore.write('personal-os-draft-chat',{kind:'chat',body:'short',updated_at:recent,save_failed:false,hidden_until:null,route:'chat',focus:'#chat-message'}); window.PersonalOSDraftStore.write(`personal-os-draft-decision-${value}-result`,{kind:'decision_result',body:'Synthetic four day result',fields:{good:'Synthetic good',next:'Synthetic next',score:'良かった'},target_id:value,mode:'result',updated_at:fourDays,save_failed:false,hidden_until:null,route:'decisions',focus:'#decision-outcome-text'}); window.PersonalOSDraftStore.write('personal-os-draft-ux-feedback',{kind:'ux_feedback',body:'Synthetic old feedback draft',fields:{expected:'Synthetic expected'},updated_at:old,save_failed:false,hidden_until:null,route:'settings',focus:'#ux-feedback-body'}); }""", draft_decision_id)
+    page.evaluate("() => window.refreshActionCenter?.()")
     page.wait_for_timeout(80)
     if "書きかけ" in page.locator("#today-daily-actions h2").inner_text():
         raise E2EFailure("short or old draft incorrectly occupied the Today action")
@@ -421,12 +424,35 @@ def verify_action_center_review_inbox(page: Any, database: Path, directory: Path
     draft_state = page.evaluate("() => ({ text: document.querySelector('#today-daily-actions')?.textContent || '', keys: Object.keys(sessionStorage) })")
     if "書きかけの記録" not in draft_state["text"]:
         raise E2EFailure(f"client draft did not override the server action: {draft_state}")
-    page.evaluate("""async () => { const key='personal-os-draft-chat'; const draft=JSON.parse(sessionStorage.getItem(key)); draft.body='Synthetic failed consultation draft'; draft.save_failed=true; sessionStorage.setItem(key,JSON.stringify(draft)); await window.refreshActionCenter?.(); }""")
+    page.evaluate("""async () => { window.PersonalOSDraftStore.write('personal-os-draft-chat',{body:'短い失敗',save_failed:true}); await window.refreshActionCenter?.(); }""")
     page.wait_for_timeout(80)
     if "保存に失敗" not in page.locator("#today-daily-actions").inner_text():
         raise E2EFailure("save_failed draft did not outrank the recent normal draft")
+    if prefix == "mobile-390":
+        screenshot(page, directory, manifest, f"{prefix}-action-center-failed-short-draft", "#today", "failed-short-draft", viewport)
     page.evaluate("() => sessionStorage.removeItem('personal-os-draft-chat')")
     page.evaluate("() => window.refreshActionCenter?.()")
+    if page.locator("#today-daily-actions .old-draft-list").count() == 0:
+        raise E2EFailure("72-hour and older drafts were not offered in the restore list")
+    page.locator("#today-daily-actions .old-draft-list summary").click()
+    if page.locator("#today-daily-actions [data-old-draft-key]").count() < 2:
+        raise E2EFailure("restorable four-day and old drafts were not both retained")
+    if prefix == "mobile-390":
+        page.evaluate("() => { const card=document.querySelector('#today-daily-actions'); if(card) window.scrollTo(0,Math.max(0,card.offsetTop-72)); }")
+        page.wait_for_timeout(100)
+        screenshot(page, directory, manifest, f"{prefix}-action-center-restorable-drafts", "#today", "restorable-drafts", viewport)
+    page.locator(f"#today-daily-actions [data-old-draft-key='personal-os-draft-decision-{draft_decision_id}-result']").click()
+    page.locator("#decision-outcome-sheet").wait_for(state="visible", timeout=5000)
+    if page.locator("#decision-outcome-text").input_value() != "Synthetic four day result" or page.locator("#decision-outcome-good").input_value() != "Synthetic good":
+        raise E2EFailure("Decision result Draft v2 did not reopen the target sheet with all fields")
+    page.locator("#decision-outcome-sheet [data-sheet-close]").last.click()
+    route(page, "today"); page.evaluate("() => window.refreshActionCenter?.()"); page.locator("#today-daily-actions .old-draft-list summary").click()
+    page.locator("#today-daily-actions [data-old-draft-key='personal-os-draft-ux-feedback']").click()
+    page.locator("#ux-feedback-sheet").wait_for(state="visible", timeout=5000)
+    if page.locator("#ux-feedback-body").input_value() != "Synthetic old feedback draft" or page.locator("#ux-feedback-expected").input_value() != "Synthetic expected":
+        raise E2EFailure("Feedback Draft v2 did not reopen the feedback sheet")
+    page.locator("#ux-feedback-sheet [data-sheet-close]").last.click()
+    route(page, "today"); page.evaluate("() => window.refreshActionCenter?.()")
     page.locator("#today-daily-actions [data-action-primary]").click()
     page.locator("#home").wait_for(state="visible")
     page.evaluate("() => { sessionStorage.removeItem('personal-os-draft-memo'); }")
@@ -512,6 +538,29 @@ def verify_action_center_review_inbox(page: Any, database: Path, directory: Path
         if page.locator("#review-inbox-load-more:visible").count():
             page.locator("#review-inbox-load-more").click()
             page.wait_for_function("count => document.querySelectorAll('#review-inbox-focus [data-review-id],#review-inbox-list [data-review-id]').length > count", arg=first_page_count, timeout=5000)
+        normal_fact = page.locator("[data-review-kind='fact']").first
+        if normal_fact.count() == 0:
+            raise E2EFailure("normal Fact was not available for Evidence verification")
+        normal_id = normal_fact.get_attribute("data-review-id")
+        if normal_fact.locator(".review-evidence .body").count():
+            raise E2EFailure("normal Evidence was embedded in the initial DOM")
+        if prefix == "desktop-1280":
+            screenshot(page, directory, manifest, f"{prefix}-review-normal-evidence-closed", "#verify", "normal-evidence-closed", viewport)
+        with page.expect_response(lambda response: response.url.endswith(f"/api/review-inbox/{normal_id}/detail"), timeout=8000) as normal_detail:
+            normal_fact.locator(".review-evidence summary").click()
+        if not normal_detail.value.ok or "no-store" not in (normal_detail.value.headers.get("cache-control") or "").lower():
+            raise E2EFailure("normal Evidence detail did not return a non-cacheable successful response")
+        normal_fact.locator(".review-evidence .body").wait_for(state="visible", timeout=5000)
+        if "合成デモの資産、旅行、住居、人物予定" not in normal_fact.inner_text():
+            raise E2EFailure("normal Fact Evidence was not rendered after lazy load")
+        if prefix == "desktop-1280":
+            screenshot(page, directory, manifest, f"{prefix}-review-normal-evidence-open", "#verify", "normal-evidence-open", viewport)
+        technical = normal_fact.locator(".review-technical")
+        if technical.count() == 0 or technical.get_attribute("open") is not None:
+            raise E2EFailure("technical detail was missing or initially open")
+        technical.locator("summary").click()
+        if prefix == "desktop-1280":
+            screenshot(page, directory, manifest, f"{prefix}-review-technical-detail", "#verify", "technical-detail", viewport)
         while page.locator("[data-review-kind='memory_proposal']").count() == 0 and page.locator("#review-inbox-load-more:visible").count():
             page.locator("#review-inbox-load-more").click(); page.wait_for_timeout(180)
         proposal = page.locator("[data-review-kind='memory_proposal']").first
@@ -792,12 +841,14 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
         "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
         "desktop-1280-action-center.png", "desktop-1280-review-inbox.png", "desktop-1280-review-focus.png",
         "desktop-1280-review-sensitive-masked.png", "desktop-1280-review-sensitive-detail.png", "desktop-1280-review-three-complete.png",
+        "desktop-1280-review-normal-evidence-closed.png", "desktop-1280-review-normal-evidence-open.png", "desktop-1280-review-technical-detail.png",
         "desktop-1280-today-digest.png",
         "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
         "desktop-1280-decision-replay.png", "desktop-1280-decision-replay-evidence.png", "desktop-1280-ux-feedback.png", "desktop-1280-production-readiness.png",
         "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png", "desktop-1280-timeline.png", "desktop-1280-timeline-detail.png",
         "mobile-390-today.png", "mobile-390-memory.png", "mobile-390-memory-image.png",
         "mobile-390-action-center.png", "mobile-390-review-inbox.png", "mobile-390-review-snooze.png",
+        "mobile-390-action-center-failed-short-draft.png", "mobile-390-action-center-restorable-drafts.png",
         "mobile-390-today-digest.png",
         "mobile-390-chat-result.png", "mobile-390-decisions.png", "mobile-390-decision-result-sheet.png",
         "mobile-390-decision-replay.png", "mobile-390-decision-replay-missing-stage.png",

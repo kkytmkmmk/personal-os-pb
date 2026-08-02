@@ -12,8 +12,9 @@
 
 ## B. Draft
 
-- AC-004: 保存失敗Draftは主Action候補になる。
-- AC-005: 72時間以内の有効Draftは高優先候補、7日以上前のDraftは主Actionにならない。
+- AC-004: 保存失敗Draftは空白以外1文字以上なら主Actionの最優先候補になる。
+- AC-005: 72時間以内の10文字以上Draftだけが通常の主Action候補になり、72時間超、7日以上、日時不明legacyは再開一覧に残る。
+- 判断結果・後日評価・Feedback Draftから対象Sheetを直接開き、全Fieldを復元できる。
 - 破棄は確認後にだけ削除される。
 
 ## C. Review Inbox
@@ -38,3 +39,24 @@
 - RI-013: Public ScreenshotはSyntheticのみ、Production一覧はSafe Summary、Production詳細は本人操作後に実内容を確認できる。
 - Sensitive本文はURL、Console、Public Fixtureへ出さない。
 - Production DBを自動E2Eで開かない。本人による手動確認は、Todayを開く、主Actionを確認、Inboxを開く、1件確認、1件を1日Snooze、Reload後の維持確認に限る。
+
+## G. Startup Migration
+
+- Migration 014相当のTemporary DBから`PERSONAL_OS_RUN_STARTUP_MAINTENANCE=false`で起動しても015が1回だけ適用される。
+- `memory_proposal_queue_state`が作成され、既存Fact本文、pending、deferredが変わらない。
+- 2回目の起動も冪等で、Review Inbox Queryが成功する。
+
+## H. Evidence / State
+
+- 一覧ResponseにEvidence本文、値、Document title、Extractor、Promptを含めない。
+- 通常Factの「根拠を見る」は初回だけ詳細APIを取得し、no-store ResponseのEvidenceを表示する。
+- 技術詳細は初期状態で閉じる。Sensitive詳細を閉じると実内容をDOMと一時Mapから破棄する。
+- confirmed/rejectedをReview APIから再開・反転できない。同じ終端状態の再送だけは冪等でよい。
+- 1日・1週間Snooze、期限なし保留、再開で元のreasonを維持し、有限Snoozeではnote/reviewed_atも変更しない。
+
+## I. Large Backlog
+
+- 1,100件のNormalの後に作ったConflictがUrgentとTodayの先頭候補になる。
+- NormalをCursorで最終Pageまで取得して重複・欠落がない。
+- Action CenterはUrgent 1件のためにNormal/Deferred本文をPythonへ全件ロードしない。
+- 5,000件Synthetic DBでもResponseとDOMは指定limit以内である。

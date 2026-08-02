@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -175,7 +176,22 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
     def test_sensitive_review_masks_summary_value_and_evidence(self):
         self.fact(category="finance", summary="秘密の金額", value={"amount": 999}, validation="conflict")
         item = app.review_inbox_projection("urgent")["items"][0]
-        self.assertEqual((item["summary"], item["value_json"], item["evidence"]), ("機微情報の確認が必要です", "{}", ""))
+        self.assertEqual(item["summary"], "機微情報の確認が必要です")
+        self.assertNotIn("value_json", item)
+        self.assertNotIn("evidence", item)
+
+    def test_list_projection_excludes_raw_and_technical_detail(self):
+        self.fact(summary="通常候補")
+        item = app.review_inbox_projection("normal")["items"][0]
+        for key in ("evidence", "document_title", "extractor", "extractor_model", "prompt_version", "technical_detail"):
+            self.assertNotIn(key, item)
+
+    def test_normal_detail_contains_evidence_and_technical_detail(self):
+        fact_id = self.fact(summary="通常候補")
+        detail = app.review_inbox_detail(fact_id)
+        self.assertIn("本人の明示Evidence", detail["evidence"])
+        self.assertEqual(detail["technical_detail"]["extractor"], "synthetic")
+        self.assertEqual(detail["technical_detail"]["internal_id"], fact_id)
 
     def test_sensitive_detail_requires_explicit_include(self):
         fact_id = self.fact(category="finance", summary="秘密の金額", value={"amount": 999})
@@ -202,6 +218,38 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
         app.update_fact_review_state(fact_id, "pending", "one_week")
         with app.db() as connection:
             self.assertEqual(connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()[0], "pending")
+
+    def test_finite_snooze_is_metadata_only(self):
+        fact_id = self.fact(validation="conflict")
+        with app.db() as connection:
+            connection.execute("UPDATE fact_reviews SET review_note='元の注記',reviewed_at='2025-01-01' WHERE fact_id=?", (fact_id,))
+            before = tuple(connection.execute("SELECT state,reason,review_note,reviewed_at FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone())
+        app.update_fact_review_state(fact_id, "pending", "one_week")
+        with app.db() as connection:
+            after = tuple(connection.execute("SELECT state,reason,review_note,reviewed_at FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone())
+        self.assertEqual(after, before)
+
+    def test_defer_and_resume_preserve_reason(self):
+        fact_id = self.fact()
+        app.update_fact_review_state(fact_id, "deferred", "indefinite")
+        app.update_fact_review_state(fact_id, "pending")
+        with app.db() as connection:
+            self.assertEqual(connection.execute("SELECT reason FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()[0], "要確認")
+
+    def test_terminal_review_cannot_be_reopened_or_changed(self):
+        confirmed = self.fact(state="confirmed")
+        rejected = self.fact(state="rejected", summary="却下済み")
+        self.assertEqual(app.update_fact_review_state(confirmed, "confirmed")["state"], "confirmed")
+        self.assertEqual(app.update_fact_review_state(rejected, "rejected")["state"], "rejected")
+        for fact_id, state in ((confirmed, "pending"), (confirmed, "deferred"), (confirmed, "rejected"),
+                               (rejected, "pending"), (rejected, "confirmed")):
+            with self.assertRaises(ValueError):
+                app.update_fact_review_state(fact_id, state, "indefinite" if state == "deferred" else "")
+
+    def test_deferred_requires_resume_before_finite_snooze(self):
+        fact_id = self.fact(state="deferred")
+        with self.assertRaises(ValueError):
+            app.update_fact_review_state(fact_id, "pending", "one_day")
 
     def test_expired_pending_snooze_returns_to_original_bucket(self):
         fact_id = self.fact(validation="conflict")
@@ -283,6 +331,52 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
         result = app.review_inbox_projection("normal")
         self.assertEqual(len(result["items"]), 10)
         self.assertIsNotNone(result["next_cursor"])
+
+    def test_urgent_after_eleven_hundred_normal_reviews_is_not_lost(self):
+        with app.db() as connection:
+            for index in range(1100):
+                fact_id = connection.execute(
+                    """INSERT INTO facts(document_id,chunk_id,source_chunk_id,category,fact_type,fact_key,value_json,summary,
+                              confidence,truth_confidence,extractor,extractor_model,prompt_version,created_at,
+                              retrieval_eligibility,validation_status,status,personal_relevance)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (self.document_id,self.chunk_id,self.chunk_id,"life","preference",f"life.bulk.{index}","{}",f"候補{index}",.6,.6,"synthetic","none","ux1-test",f"2026-01-01T00:{index//60:02d}:{index%60:02d}+00:00","pending","pending","unknown","personal"),
+                ).lastrowid
+                connection.execute("INSERT INTO fact_reviews(fact_id,state,reason,created_at) VALUES(?,'pending','要確認',?)", (fact_id,self.stamp))
+        urgent = self.fact(summary="最後の矛盾", validation="conflict", created="2026-12-31T00:00:00+00:00")
+        self.assertEqual(app.review_inbox_projection("urgent", limit=1)["items"][0]["id"], urgent)
+        self.assertEqual(app.action_center_projection()["top_action"]["id"], urgent)
+
+        seen = set(); cursor = None
+        while True:
+            page = app.review_inbox_projection("normal", limit=100, cursor=cursor)
+            ids = {item["id"] for item in page["items"] if item["item_kind"] == "fact"}
+            self.assertTrue(seen.isdisjoint(ids)); seen.update(ids)
+            cursor = page["next_cursor"]
+            if not cursor: break
+        self.assertEqual(len(seen), 1100)
+
+    def test_fast_start_applies_015_without_rewriting_reviews(self):
+        pending = self.fact(summary="移行前pending")
+        deferred = self.fact(summary="移行前deferred", state="deferred")
+        with app.db() as connection:
+            before_summary = connection.execute("SELECT summary FROM facts WHERE id=?", (pending,)).fetchone()[0]
+            connection.execute("DROP TABLE memory_proposal_queue_state")
+            connection.execute("DELETE FROM schema_migrations WHERE version='015_action_center_review_inbox_stabilization'")
+        old_value = os.environ.get("PERSONAL_OS_RUN_STARTUP_MAINTENANCE")
+        os.environ["PERSONAL_OS_RUN_STARTUP_MAINTENANCE"] = "false"
+        try:
+            app.initialize(); app.initialize()
+        finally:
+            if old_value is None: os.environ.pop("PERSONAL_OS_RUN_STARTUP_MAINTENANCE", None)
+            else: os.environ["PERSONAL_OS_RUN_STARTUP_MAINTENANCE"] = old_value
+        with app.db() as connection:
+            self.assertIsNotNone(connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_proposal_queue_state'").fetchone())
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version='015_action_center_review_inbox_stabilization'").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT summary FROM facts WHERE id=?", (pending,)).fetchone()[0], before_summary)
+            self.assertEqual(connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (pending,)).fetchone()[0], "pending")
+            self.assertEqual(connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (deferred,)).fetchone()[0], "deferred")
+        self.assertIsInstance(app.review_inbox_projection("all"), dict)
 
     def test_migration_is_idempotent(self):
         app.migrate_action_center_review_inbox(); app.migrate_action_center_review_inbox()

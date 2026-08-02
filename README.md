@@ -99,7 +99,7 @@ PERSONAL_OS_MONEYFORWARD_DB_PATH=C:\absolute\path\to\moneyforward.db
 
 既存の解析ジョブが大量にキュー済みで起動時再走査が長い場合だけ、`.env`へ `PERSONAL_OS_QUEUE_ANALYSIS_ON_START=false` を追加できます。既存ジョブのWorker処理と、新しく追加した記録の解析キューは停止しません。
 
-すでに移行済みの大容量DBで起動時の全Fact再監査も省略する場合は、`PERSONAL_OS_RUN_STARTUP_MAINTENANCE=false` を指定できます。既存DBに必須テーブルが揃っていることを読み取り確認して高速起動し、不足時は通常のスキーマ処理へ戻ります。全件修復や新しいDB migrationが必要なときは一度 `true` に戻して起動します。
+すでに移行済みの大容量DBで起動時の全Fact再監査も省略する場合は、`PERSONAL_OS_RUN_STARTUP_MAINTENANCE=false` を指定できます。この設定でも軽量で冪等なSchema Migration、必須Table確認、Migration version記録は必ず実行されます。省略されるのは全件Backfill、Evidence再監査、再解析、Embedding再生成などの重いMaintenanceだけです。
 
 ## データモデル
 

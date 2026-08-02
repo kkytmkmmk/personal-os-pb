@@ -970,18 +970,41 @@ def initialize() -> None:
     run_startup_maintenance = os.environ.get(
         "PERSONAL_OS_RUN_STARTUP_MAINTENANCE", "true"
     ).strip().lower() != "false"
-    if not run_startup_maintenance and DB_PATH.is_file():
+    if DB_PATH.is_file():
+        # Schema changes are deliberately independent from startup maintenance.
+        # A large production database may skip expensive re-audits, but it must
+        # never start against an older schema.
+        with db() as connection:
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS schema_migrations (
+                     version TEXT PRIMARY KEY,
+                     applied_at TEXT NOT NULL
+                )"""
+            )
+            existing_tables = {
+                str(row["name"])
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+        if {"facts", "fact_reviews", "memory_proposals", "decisions"} <= existing_tables:
+            migrate_decision_replay()
+            migrate_action_center_review_inbox()
+            migrate_action_center_review_inbox_stabilization()
         with db() as connection:
             existing_tables = {
                 str(row["name"])
                 for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
+            latest_migration = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?",
+                ("015_action_center_review_inbox_stabilization",),
+            ).fetchone()
         required_tables = {
             "entries", "documents", "chunks", "facts", "fact_evidence",
             "analysis_jobs", "runtime_leases", "app_settings", "decisions",
-            "fact_review_queue_state", "action_center_snoozes",
+            "fact_review_queue_state", "memory_proposal_queue_state",
+            "action_center_snoozes", "schema_migrations",
         }
-        if required_tables <= existing_tables:
+        if not run_startup_maintenance and required_tables <= existing_tables and latest_migration:
             for provider in extraction_providers():
                 scope = (provider, provider_model(provider, "extract"), PROMPT_VERSION)
                 ANALYSIS_PREFILTER_SCOPES.add(scope)
@@ -3391,6 +3414,14 @@ def migrate_action_center_review_inbox_stabilization() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_memory_proposal_queue_snoozed
               ON memory_proposal_queue_state(snoozed_until,updated_at);
+            CREATE INDEX IF NOT EXISTS idx_fact_reviews_state_fact
+              ON fact_reviews(state,fact_id);
+            CREATE INDEX IF NOT EXISTS idx_facts_review_priority
+              ON facts(retrieval_eligibility,validation_status,created_at,id);
+            CREATE INDEX IF NOT EXISTS idx_facts_fact_key_status
+              ON facts(fact_key,status);
+            CREATE INDEX IF NOT EXISTS idx_memory_proposals_status_created
+              ON memory_proposals(status,created_at,id);
             """
         )
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(memory_proposal_queue_state)")}
@@ -7584,7 +7615,75 @@ def _review_snooze_is_future(value: object) -> bool:
 
 
 SENSITIVE_REVIEW_SUMMARY = "機微情報の確認が必要です"
-REVIEW_SCAN_LIMIT = 1000
+
+_FACT_REVIEW_CTE = """
+WITH review_rows AS (
+  SELECT f.id,f.category,f.fact_type,f.fact_key,f.occurred_on,f.value_json,f.summary,
+         f.confidence,f.truth_confidence,f.subject_scope,f.resolved_entity_type,
+         f.retrieval_eligibility,f.validation_status,f.validation_reason,f.extractor,f.extractor_model,
+         f.prompt_version,f.extracted_at,f.created_at,
+         (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
+         r.state AS review_state,r.reason AS review_reason,r.review_note,q.snoozed_until,
+         COALESCE(q.presentation_count,0) AS presentation_count,
+         CASE WHEN EXISTS (
+           SELECT 1 FROM facts cf JOIN fact_reviews cr ON cr.fact_id=cf.id
+           WHERE cf.id<>f.id AND cf.fact_key=f.fact_key AND cf.status='current' AND cr.state='confirmed'
+         ) THEN 1 ELSE 0 END AS is_current_replacement,
+         CASE WHEN EXISTS (
+           SELECT 1 FROM finance_transaction_candidates fc
+           WHERE fc.fact_id=f.id AND fc.is_actual=1 AND fc.eligibility_state='pending'
+         ) THEN 1 ELSE 0 END AS is_actual_transaction,
+         CASE
+           WHEN LOWER(COALESCE(f.retrieval_eligibility,''))='conflict'
+             OR LOWER(COALESCE(f.validation_status,''))='conflict' THEN 0
+           WHEN EXISTS (
+             SELECT 1 FROM facts cf JOIN fact_reviews cr ON cr.fact_id=cf.id
+             WHERE cf.id<>f.id AND cf.fact_key=f.fact_key AND cf.status='current' AND cr.state='confirmed'
+           ) THEN 1
+           WHEN EXISTS (
+             SELECT 1 FROM decisions ad,
+               json_each(CASE WHEN json_valid(ad.related_fact_ids_json) THEN ad.related_fact_ids_json ELSE '[]' END) jf
+             WHERE ad.decision_state IN ('candidate','considered','decided','executed')
+               AND CAST(jf.value AS INTEGER)=f.id
+           ) THEN 2
+           WHEN LOWER(COALESCE(f.validation_status,'')) IN ('anomaly','outlier')
+             OR LOWER(COALESCE(f.validation_reason,'')) LIKE '%anomaly%'
+             OR LOWER(COALESCE(f.validation_reason,'')) LIKE '%outlier%'
+             OR COALESCE(f.validation_reason,'') LIKE '%外れ値%'
+             OR COALESCE(r.reason,'') LIKE '%外れ値%' THEN 3
+           WHEN EXISTS (
+             SELECT 1 FROM finance_transaction_candidates fc
+             WHERE fc.fact_id=f.id AND fc.is_actual=1 AND fc.eligibility_state='pending'
+           ) THEN 4
+           WHEN LOWER(COALESCE(f.fact_type,'')) IN ('schedule','plan')
+             AND date(COALESCE(NULLIF(f.valid_from,''),NULLIF(f.occurred_on,''),
+               json_extract(f.value_json,'$.target_date'),json_extract(f.value_json,'$.due_date'),
+               json_extract(f.value_json,'$.date'))) BETWEEN date('now') AND date('now','+14 day') THEN 5
+           ELSE 20
+         END AS urgent_priority,
+         COALESCE(NULLIF(f.created_at,''),'') AS sort_time
+  FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+  LEFT JOIN fact_review_queue_state q ON q.fact_id=f.id
+  WHERE r.state IN ('pending','deferred')
+)
+"""
+
+
+def _fact_review_bucket_clause(bucket: str) -> tuple[str, int]:
+    if bucket == "urgent":
+        return "review_state='pending' AND (snoozed_until IS NULL OR snoozed_until<=?) AND urgent_priority<20", 0
+    if bucket == "normal":
+        return "review_state='pending' AND (snoozed_until IS NULL OR snoozed_until<=?) AND urgent_priority=20", 1
+    return "(review_state='deferred' OR (review_state='pending' AND snoozed_until>?))", 2
+
+
+def _review_after_clause(bucket_rank: int, item_kind: str, after_key: tuple[object, ...] | None) -> tuple[str, list[object]]:
+    if after_key is None:
+        return "", []
+    return (
+        " AND (?,urgent_priority,sort_time,?,id)>(?,?,?,?,?)",
+        [bucket_rank, item_kind, *after_key],
+    )
 
 
 def _review_date_within_days(row: dict[str, object], days: int = 14) -> bool:
@@ -7671,7 +7770,6 @@ def _proposal_projection(row: dict[str, object]) -> dict[str, object]:
         "item_key": f"memory_proposal:{int(row['id'])}", "category": domain,
         "domain_label": _digest_domain_label(domain), "bucket": "deferred" if int(row.get("is_deferred") or 0) or _review_snooze_is_future(row.get("snoozed_until")) else "normal",
         "priority_reason": "AIが抽出した保存候補です", "sensitive": sensitive, "summary": summary,
-        "value_json": "{}", "evidence": "", "document_title": "非表示" if sensitive else str(row.get("entry_title") or "記録"),
         "evidence_count": len(facts), "created_at": str(row.get("created_at") or ""),
         "presentation_count": int(row.get("presentation_count") or 0),
         "_priority": 20, "_sort_time": str(row.get("created_at") or ""),
@@ -7682,112 +7780,137 @@ def review_inbox_projection(
     bucket: str = "urgent", domain: str = "", limit: int = 10,
     cursor: str | None = None,
 ) -> dict[str, object]:
-    """Project pending reviews into deterministic urgent/normal/deferred queues."""
+    """Project a bounded page from bucket-specific SQL queries.
+
+    Classification happens before LIMIT so a recent conflict cannot be hidden
+    behind thousands of older normal reviews.
+    """
     if bucket not in {"urgent", "normal", "deferred", "all"}:
         raise ValueError("Invalid review bucket")
     limit = max(1, min(int(limit), 100))
     after_key = _review_cursor_decode(cursor)
     requested_domain = canonical_domain(domain) if domain else ""
+    bucket_rank = {"urgent": 0, "normal": 1, "deferred": 2}
+    requested_buckets = ["urgent", "normal", "deferred"] if bucket == "all" else [bucket]
+    timestamp = now()
     with db() as connection:
-        decision_fact_ids: set[int] = set()
-        for decision_row in connection.execute(
-            "SELECT related_fact_ids_json FROM decisions WHERE decision_state IN ('candidate','considered','decided','executed')"
-        ):
-            try:
-                decision_fact_ids.update(int(value) for value in json.loads(decision_row[0] or "[]"))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                continue
-        fact_sql = """SELECT f.id,f.category,f.fact_type,f.fact_key,f.occurred_on,f.value_json,f.summary,
-                      f.confidence,f.truth_confidence,f.subject_scope,f.resolved_entity_type,
-                      f.retrieval_eligibility,f.validation_status,f.validation_reason,f.extractor,f.extractor_model,
-                      f.prompt_version,f.extracted_at,f.created_at,
-                      (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
-                      d.title AS document_title,d.source_created_at,
-                      e.canonical_name AS subject,COALESCE(e.entity_type,f.resolved_entity_type) AS entity_type,
-                      r.state AS review_state,r.reason,r.review_note,q.snoozed_until,q.last_presented_at,
-                      COALESCE(q.presentation_count,0) AS presentation_count,
-                      CASE WHEN EXISTS (
-                        SELECT 1 FROM facts current_fact
-                        JOIN fact_reviews current_review ON current_review.fact_id=current_fact.id
-                        WHERE current_fact.id<>f.id AND current_fact.fact_key=f.fact_key
-                          AND current_fact.status='current' AND current_review.state='confirmed'
-                      ) THEN 1 ELSE 0 END AS is_current_replacement
-                      ,CASE WHEN EXISTS (
-                        SELECT 1 FROM finance_transaction_candidates fc
-                        WHERE fc.fact_id=f.id AND fc.is_actual=1 AND fc.eligibility_state='pending'
-                      ) THEN 1 ELSE 0 END AS is_actual_transaction
-               FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
-               LEFT JOIN documents d ON d.id=f.document_id
-               LEFT JOIN entities e ON e.id=f.subject_entity_id
-               LEFT JOIN fact_review_queue_state q ON q.fact_id=f.id
-               WHERE r.state IN ('pending','deferred')"""
-        fact_params: list[object] = []
-        if requested_domain:
-            fact_sql += " AND f.category=?"
-            fact_params.append(requested_domain)
-        fact_sql += " ORDER BY f.created_at ASC,f.id ASC LIMIT ?"
-        fact_params.append(REVIEW_SCAN_LIMIT + 1)
-        rows = [dict(row) for row in connection.execute(fact_sql, fact_params)]
-        projected: list[dict[str, object]] = []
         counts = {"urgent": 0, "normal": 0, "deferred": 0}
-        bucket_rank = {"urgent": 0, "normal": 1, "deferred": 2}
+        projected: list[dict[str, object]] = []
         sensitive_domains = {"finance", "relationship", "health"}
-        for row in rows:
-            row_domain = canonical_domain(str(row.get("category") or "other"))
-            if requested_domain and row_domain != requested_domain:
+
+        for name in ("urgent", "normal", "deferred"):
+            clause, _rank = _fact_review_bucket_clause(name)
+            domain_clause = " AND category=?" if requested_domain else ""
+            params: list[object] = [timestamp]
+            if requested_domain:
+                params.append(requested_domain)
+            counts[name] += int(connection.execute(
+                _FACT_REVIEW_CTE + f"SELECT COUNT(*) FROM review_rows WHERE {clause}{domain_clause}", params,
+            ).fetchone()[0])
+            proposal_clause = (
+                "(q.is_deferred=1 OR (q.snoozed_until IS NOT NULL AND q.snoozed_until>?))"
+                if name == "deferred" else
+                "COALESCE(q.is_deferred,0)=0 AND (q.snoozed_until IS NULL OR q.snoozed_until<=?)"
+                if name == "normal" else "0"
+            )
+            if name != "urgent":
+                proposal_params: list[object] = [timestamp]
+                proposal_domain = ""
+                if requested_domain:
+                    proposal_domain = " AND json_extract(p.facts_json,'$[0].category')=?"
+                    proposal_params.append(requested_domain)
+                counts[name] += int(connection.execute(
+                    f"""SELECT COUNT(*) FROM memory_proposals p
+                         LEFT JOIN memory_proposal_queue_state q ON q.proposal_id=p.id
+                         WHERE p.status='pending' AND {proposal_clause}{proposal_domain}""",
+                    proposal_params,
+                ).fetchone()[0])
+
+        fetch_size = limit + 1
+        for name in requested_buckets:
+            clause, rank = _fact_review_bucket_clause(name)
+            after_sql, after_params = _review_after_clause(rank, "fact", after_key)
+            domain_clause = " AND category=?" if requested_domain else ""
+            params = [timestamp]
+            if requested_domain:
+                params.append(requested_domain)
+            params.extend(after_params)
+            params.append(fetch_size)
+            rows = [dict(row) for row in connection.execute(
+                _FACT_REVIEW_CTE + f"""SELECT * FROM review_rows WHERE {clause}{domain_clause}{after_sql}
+                    ORDER BY urgent_priority,sort_time,id LIMIT ?""", params,
+            )]
+            for row in rows:
+                row_domain = canonical_domain(str(row.get("category") or "other"))
+                sensitive = row_domain in sensitive_domains
+                priority = int(row.get("urgent_priority") or 0)
+                urgent_reasons = {
+                    0: "現在の記憶と矛盾する可能性があります",
+                    1: "現在の情報を更新する可能性があります",
+                    2: "相談や判断の根拠として参照された情報です",
+                    3: "現在値へ影響する数値の外れ値候補です",
+                    4: "本人の実取引として抽出された未確認情報です",
+                    5: "14日以内に予定日または期限を迎える情報です",
+                }
+                reason = urgent_reasons.get(priority, str(row.get("review_reason") or "根拠を確認して確定できます")) if name == "urgent" else str(row.get("review_reason") or "根拠を確認して確定できます")
+                projected.append({
+                    "id": int(row["id"]), "item_kind": "fact", "item_key": f"fact:{int(row['id'])}",
+                    "category": row_domain, "domain_label": _digest_domain_label(row_domain), "bucket": name,
+                    "priority_reason": reason, "sensitive": sensitive,
+                    "summary": SENSITIVE_REVIEW_SUMMARY if sensitive else str(row.get("summary") or "確認が必要な記憶")[:500],
+                    "evidence_count": int(row.get("evidence_count") or 0),
+                    "created_at": str(row.get("created_at") or ""),
+                    "presentation_count": int(row.get("presentation_count") or 0),
+                    "_priority": priority, "_sort_time": str(row.get("sort_time") or ""),
+                })
+
+            if name == "urgent":
                 continue
-            row_bucket, priority, reason = _review_bucket(row, decision_fact_ids)
-            counts[row_bucket] += 1
-            sensitive = row_domain in sensitive_domains
-            item = {
-                **row,
-                "category": row_domain,
-                "domain_label": _digest_domain_label(row_domain),
-                "bucket": row_bucket,
-                "item_kind": "fact", "item_key": f"fact:{int(row['id'])}",
-                "priority_reason": reason,
-                "sensitive": sensitive,
-                "summary": SENSITIVE_REVIEW_SUMMARY if sensitive else str(row.get("summary") or "確認が必要な記憶"),
-                "value_json": "{}" if sensitive else str(row.get("value_json") or "{}"),
-                "evidence": "",
-                "document_title": "非表示" if sensitive else str(row.get("document_title") or "原文"),
-                "_priority": priority,
-                "_sort_time": str(row.get("created_at") or row.get("source_created_at") or ""),
-            }
-            projected.append(item)
-        proposal_rows = [dict(row) for row in connection.execute(
-            """SELECT p.id,p.entry_id,p.facts_json,p.created_at,e.title AS entry_title,q.snoozed_until,q.is_deferred,
-                      COALESCE(q.presentation_count,0) AS presentation_count
-               FROM memory_proposals p JOIN entries e ON e.id=p.entry_id
-               LEFT JOIN memory_proposal_queue_state q ON q.proposal_id=p.id
-               WHERE p.status='pending' ORDER BY p.created_at ASC,p.id ASC LIMIT ?""",
-            (REVIEW_SCAN_LIMIT + 1,),
-        )]
-        for proposal_row in proposal_rows:
-            item = _proposal_projection(proposal_row)
-            if requested_domain and item["category"] != requested_domain:
-                continue
-            counts[str(item["bucket"])] += 1
-            projected.append(item)
+            proposal_condition = (
+                "(q.is_deferred=1 OR (q.snoozed_until IS NOT NULL AND q.snoozed_until>?))"
+                if name == "deferred" else
+                "COALESCE(q.is_deferred,0)=0 AND (q.snoozed_until IS NULL OR q.snoozed_until<=?)"
+            )
+            proposal_domain = " AND json_extract(p.facts_json,'$[0].category')=?" if requested_domain else ""
+            if after_key is None:
+                after_sql, after_params = "", []
+            else:
+                after_sql = " AND (?,20,p.created_at,'memory_proposal',p.id)>(?,?,?,?,?)"
+                after_params = [rank, *after_key]
+            proposal_params = [timestamp]
+            if requested_domain:
+                proposal_params.append(requested_domain)
+            proposal_params.extend(after_params)
+            proposal_params.append(fetch_size)
+            proposal_rows = [dict(row) for row in connection.execute(
+                f"""SELECT p.id,p.entry_id,p.facts_json,p.created_at,p.created_at AS sort_time,
+                           20 AS urgent_priority,e.title AS entry_title,q.snoozed_until,q.is_deferred,
+                           COALESCE(q.presentation_count,0) AS presentation_count
+                    FROM memory_proposals p JOIN entries e ON e.id=p.entry_id
+                    LEFT JOIN memory_proposal_queue_state q ON q.proposal_id=p.id
+                    WHERE p.status='pending' AND {proposal_condition}{proposal_domain}{after_sql}
+                    ORDER BY p.created_at,p.id LIMIT ?""", proposal_params,
+            )]
+            for proposal_row in proposal_rows:
+                item = _proposal_projection(proposal_row)
+                item["_priority"] = 20
+                item["_sort_time"] = str(proposal_row.get("sort_time") or "")
+                projected.append(item)
         projected.sort(key=lambda item: (
             bucket_rank[str(item["bucket"])], int(item["_priority"]),
             str(item["_sort_time"]), str(item["item_kind"]), int(item["id"]),
         ))
-        selected = projected if bucket == "all" else [item for item in projected if item["bucket"] == bucket]
         keyed = [(
             bucket_rank[str(item["bucket"])], int(item["_priority"]), str(item["_sort_time"]),
             str(item["item_kind"]), int(item["id"]), item,
-        ) for item in selected]
-        if after_key is not None:
-            keyed = [entry for entry in keyed if entry[:5] > after_key]
+        ) for item in projected]
         page_entries = keyed[:limit]
         page = [entry[5] for entry in page_entries]
         for item in page:
             item.pop("_priority", None)
             item.pop("_sort_time", None)
         next_cursor = _review_cursor_encode(page_entries[-1][:5]) if len(keyed) > limit and page_entries else None
-    return {"items": page, "counts": counts, "next_cursor": next_cursor, "bucket": bucket,
-            "scan_limited": len(rows) > REVIEW_SCAN_LIMIT or len(proposal_rows) > REVIEW_SCAN_LIMIT}
+    return {"items": page, "counts": counts, "counts_exact": True, "next_cursor": next_cursor, "bucket": bucket}
 
 
 def review_inbox_detail(fact_id: int, include_sensitive: bool = False) -> dict[str, object]:
@@ -7795,7 +7918,8 @@ def review_inbox_detail(fact_id: int, include_sensitive: bool = False) -> dict[s
         row = connection.execute(
             """SELECT f.id,f.category,f.fact_type,f.summary,f.value_json,f.occurred_on,f.valid_from,f.valid_to,
                       f.extractor,f.extractor_model,f.prompt_version,f.extracted_at,
-                      COALESCE(c.text,sc.text,'') AS evidence,d.title AS document_title,
+                      f.validation_status,f.retrieval_eligibility,
+                      COALESCE(c.text,sc.text,'') AS evidence,d.title AS document_title,d.source_created_at,
                       (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
                       r.state AS review_state
                FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
@@ -7808,9 +7932,25 @@ def review_inbox_detail(fact_id: int, include_sensitive: bool = False) -> dict[s
     item = dict(row)
     domain = canonical_domain(str(item.get("category") or "other"))
     sensitive = domain in {"finance", "relationship", "health"}
-    item.update({"item_kind": "fact", "category": domain, "domain_label": _digest_domain_label(domain), "sensitive": sensitive})
+    technical_detail = {
+        "fact_type": item.pop("fact_type", ""),
+        "extractor": item.pop("extractor", ""),
+        "extractor_model": item.pop("extractor_model", ""),
+        "prompt_version": item.pop("prompt_version", ""),
+        "validation_status": item.pop("validation_status", ""),
+        "retrieval_eligibility": item.pop("retrieval_eligibility", ""),
+        "extracted_at": item.pop("extracted_at", ""),
+        "internal_id": int(item["id"]),
+    }
+    item.update({
+        "item_kind": "fact", "category": domain, "domain_label": _digest_domain_label(domain),
+        "sensitive": sensitive, "technical_detail": technical_detail,
+    })
     if sensitive and not include_sensitive:
-        item.update({"summary": SENSITIVE_REVIEW_SUMMARY, "value_json": "{}", "evidence": "", "document_title": "非表示"})
+        item.update({
+            "summary": SENSITIVE_REVIEW_SUMMARY, "value_json": "{}", "evidence": "",
+            "document_title": "非表示", "source_created_at": "", "technical_detail": {},
+        })
     return item
 
 
@@ -7841,21 +7981,35 @@ def update_fact_review_state(fact_id: int, state: str, defer_for: str = "", note
     if state in {"confirmed", "rejected"} and defer_for:
         raise ValueError("confirmed and rejected do not accept defer_for")
     with db() as connection:
-        current = connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()
+        current = connection.execute(
+            "SELECT state,reason,review_note,reviewed_at FROM fact_reviews WHERE fact_id=?", (fact_id,),
+        ).fetchone()
         if not current:
             raise LookupError("Review item not found")
         queue = connection.execute("SELECT snoozed_until FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone()
+        current_state = str(current["state"])
+        if current_state in {"confirmed", "rejected"}:
+            if state == current_state and not defer_for:
+                return {"message": "Already reviewed", "state": current_state, "defer_for": None, "quality": None}
+            raise ValueError("Completed review cannot be reopened or changed through this endpoint")
         if state == "pending" and not defer_for and current["state"] != "deferred" and not queue:
             raise ValueError("pending is only valid when resuming a deferred or snoozed item")
-        if state in {"confirmed", "rejected", "deferred"} and current["state"] not in {"pending", "deferred"}:
+        if current_state == "deferred" and defer_for in {"one_day", "one_week"}:
+            raise ValueError("A deferred review must be resumed before a finite snooze")
+        if state in {"confirmed", "rejected", "deferred"} and current_state not in {"pending", "deferred"}:
             raise ValueError(f"Cannot transition {current['state']} to {state}")
         stored_state = state
-        connection.execute(
-            "UPDATE fact_reviews SET state=?,reason=?,review_note=?,reviewed_at=? WHERE fact_id=?",
-            (stored_state, "ユーザー確認済み" if stored_state == "confirmed" else "ユーザー却下" if stored_state == "rejected" else "ユーザー保留",
-             str(note or "ユーザー操作")[:1000], now() if stored_state in {"confirmed", "rejected"} else None, fact_id),
-        )
-        if (state == "pending" and defer_for) or state == "deferred":
+        if state in {"confirmed", "rejected"}:
+            connection.execute(
+                "UPDATE fact_reviews SET state=?,review_note=?,reviewed_at=? WHERE fact_id=?",
+                (state, str(note or ("ユーザー確認" if state == "confirmed" else "ユーザー却下"))[:1000], now(), fact_id),
+            )
+        elif state == "deferred":
+            connection.execute("UPDATE fact_reviews SET state='deferred' WHERE fact_id=?", (fact_id,))
+        elif state == "pending" and not defer_for and current_state == "deferred":
+            connection.execute("UPDATE fact_reviews SET state='pending' WHERE fact_id=?", (fact_id,))
+        # A finite snooze is queue metadata only: do not touch fact_reviews.
+        if state == "pending" and defer_for:
             deadline = None
             if defer_for == "one_day": deadline = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
             elif defer_for == "one_week": deadline = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
@@ -7863,6 +8017,12 @@ def update_fact_review_state(fact_id: int, state: str, defer_for: str = "", note
                 """INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at)
                    VALUES(?,?,?) ON CONFLICT(fact_id) DO UPDATE SET
                    snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at""", (fact_id, deadline, now()),
+            )
+        elif state == "deferred":
+            connection.execute(
+                """INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at)
+                   VALUES(?,NULL,?) ON CONFLICT(fact_id) DO UPDATE SET
+                   snoozed_until=NULL,updated_at=excluded.updated_at""", (fact_id, now()),
             )
         else:
             connection.execute("DELETE FROM fact_review_queue_state WHERE fact_id=?", (fact_id,))
@@ -7925,7 +8085,7 @@ def _action_is_snoozed(row: dict[str, object] | None) -> bool:
 
 def action_center_projection() -> dict[str, object]:
     """Return exactly one server-side next action and compact status counts."""
-    inbox = review_inbox_projection(bucket="all", limit=100)
+    inbox = review_inbox_projection(bucket="urgent", limit=1)
     with db() as connection:
         decisions = [dict(row) for row in connection.execute(
             """SELECT id,domain,title,question,decision_state,result,later_evaluation,updated_at,created_at
@@ -7969,7 +8129,7 @@ def action_center_projection() -> dict[str, object]:
             "can_snooze": True,
         }))
 
-    urgent = [item for item in inbox["items"] if item["bucket"] == "urgent"]
+    urgent = inbox["items"]
     for priority, collection in ((4, urgent[:1]),):
         for item in collection:
             candidates.append((priority, str(item.get("source_created_at") or item.get("created_at") or ""), {
@@ -8633,6 +8793,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api-client.js": ("api-client.js", "application/javascript; charset=utf-8"),
             "/app.js": ("app.js", "application/javascript; charset=utf-8"),
             "/visualization.js": ("visualization.js", "application/javascript; charset=utf-8"),
+            "/draft-store.js": ("draft-store.js", "application/javascript; charset=utf-8"),
             "/daily-ux.js": ("daily-ux.js", "application/javascript; charset=utf-8"),
             "/action-center.js": ("action-center.js", "application/javascript; charset=utf-8"),
         }
