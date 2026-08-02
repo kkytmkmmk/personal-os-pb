@@ -1,69 +1,123 @@
 # Personal OS Daily Action Center / Review Inbox 要件
 
+この文書はToday Action Centerおよび確認Inboxの最新の機能要件正本である。実現方式は[Design](../docs/design/action_center_review_inbox_design.md)、合格条件は[Acceptance](../docs/acceptance/action_center_review_inbox_acceptance.md)を参照する。
+
 ## 1. 目的
 
-Personal OSを開いた本人が、保存済みデータや管理機能の一覧を解読せずに、今最初に何をすべきか、その理由、今は行わなくてよいかを短時間で理解できるようにする。大量の確認候補を処理すること自体を日常利用の主目的にしない。
+Personal OSを開いた本人が、保存済みデータや管理機能の一覧を解読せず、今最初に何をすべきか、その理由、今は行わなくてよいかを短時間で理解できるようにする。確認Inboxをゼロにすることを利用目標にせず、未処理候補が残っていても記録・相談・判断を利用できるようにする。
 
-## 2. Todayを日常利用の開始画面にする
+## 2. Todayの構造
 
-起動時の標準画面はTodayとし、データ管理画面ではなく次の一操作を開始する画面とする。初期表示の優先順は、今やること、記録する、相談する、今日の状態、簡潔なダイジェスト、詳細画面への入口とする。Current Fact全件、確認候補全件、Decision入力Form、管理操作を大量表示しない。
+Above the foldでは主Action、記録する、相談するを優先する。Mobile 390×844でもこの3要素を確認できること。主Actionより下にはCurrent Stateの要約、最近の変化、結果待ち・後日評価待ち等の状態件数、その他候補への入口を簡潔に表示してよい。
 
-## 3. 主Action
+主Actionは今すぐ進める候補1件であり、その他候補は補助情報である。補助候補を初期ViewportでPrimary Actionとして並べない。Current Fact全件、確認候補全件、Decision入力Form、管理操作を大量表示しない。
 
-Today最上部には主Actionを最大1件だけ表示する。主ActionにはAction名、対象、表示理由、Primary Action、後で行う操作を含める。複数候補を同格のPrimary Actionとして並べない。
+## 3. Action Centerの責務
 
-主Actionの優先順位は、入力途中のDraft、保存失敗後の再試行、結果待ちの判断、後日評価待ちの判断、重要な矛盾確認、Current情報を変更する可能性がある確認、重要度の高い通常確認、実行待ち、判断待ち、相談候補、新しい記録の案内を基本とする。同順位では決定的かつ再現可能な順番を使用し、ランダム順を使用しない。
+Action Centerは、保存失敗後の再試行、有効なDraftの再開、Decisionの結果待ち・後日評価待ち、実行待ち、判断待ち、確認Inbox内のUrgent項目、相談候補、新しい記録の案内から主Actionを最大1件選ぶ。
 
-## 4. 表示理由とQuick Action
+### AC-001 主Actionは最大1件
 
-主Actionにはユーザーが理解できる表示理由を必ず付ける。`fact_type`、`retrieval_eligibility`、`validation_status`、`extractor`、confidence数値、内部IDなどの内部状態を直接表示しない。
+Today最上部の主Actionは最大1件とし、複数候補を同格のPrimary Actionとして並べない。
 
-Todayの主要入口は「記録する」「相談する」「確認Inbox」とする。Mobileでは最初のViewportに主Action、記録する、相談するを表示する。
+### AC-002 ユーザー向け表示理由
 
-## 5. Todayの確認候補
+主ActionにはAction名、対象、ユーザーが理解できる表示理由、Primary Action、後で行う操作を表示する。内部状態、内部ID、Extractor、confidence数値等を直接表示しない。
 
-Todayへ直接表示する確認候補は最大1件とする。件数を表示する場合は重要候補の件数を中心にし、大量の総件数を作業の強制として強調しない。通常候補の全件は確認Inboxで扱う。
+### AC-003 最初のViewportから開始できる
 
-## 6. 確認Inboxと優先度
+記録・相談は常に開始しやすい入口として残し、最初のViewportから開始できること。
 
-確認候補はTodayとは別の確認Inboxへ集約し、最低限「今確認したい」「通常」「保留中」「すべて」のBucketを持つ。初期表示は「今確認したい」とし、全候補を初期表示しない。
+### AC-004 保存失敗Draftを最優先する
 
-「今確認したい」には、現在情報との矛盾、Current Factの置換候補、金額・日付・予定など現在状態へ影響する候補、相談や判断で利用されやすい候補、`conflict`候補を優先する。「通常」には自動確定基準に届かない候補、現在情報を直ちに変更しない候補、文脈確認が必要な候補を置く。「保留中」にはユーザーが後でを選んだ候補、既存の`deferred`候補、再表示期限が未来の候補を置く。
+保存APIが失敗し未送信内容が残るDraftは、主Actionの最優先候補として扱う。
 
-## 7. 決定的な並び順とFocus Mode
+### AC-005 古い・無意味なDraftは主Actionを占有しない
 
-確認候補の並び順は、同じデータ状態に対して同じ結果になるものとする。原則として優先度、Currentへの影響、矛盾の有無、意味上の日時、作成日時、IDの順で評価し、古く放置された重要候補も発見できるようにする。
+最近編集された有効なDraftは高優先候補としてよいが、意味のない短いDraftや古いDraftが重要Actionを恒常的に押し下げないこと。各Draftには続きを入力、今回は表示しない、破棄を提供し、破棄は確認を必要とする。
 
-大量候補の縦表示を標準操作にせず、確認Inboxには一件ずつ処理できるFocus Modeを設ける。各候補には「正しい」「修正する」「違う」「後で」を提供し、操作後に次の対象へ進める。一覧表示は補助機能としてよい。
+### AC-006 Todayに確認候補全件を表示しない
 
-## 8. 後で・Review状態・提示状態
+Todayから確認を促す候補は最大1件とし、大量の総件数を作業の強制として強調しない。通常候補の全件は確認Inboxで扱う。
 
-「後で」は正式なユーザー操作とし、「明日まで表示しない」「1週間表示しない」「期限を決めず保留する」を選択できる。保留した候補は直後のReloadや再起動で主Actionへ再表示しない。再表示期限を過ぎた候補は適切なQueueへ戻してよいが、既存の`deferred`候補を自動的に`pending`へ戻さない。
+### AC-007 未処理候補で通常利用をブロックしない
 
-Factの意味上の確認状態（`pending`、`confirmed`、`rejected`、`deferred`）と、UIの表示制御（再表示期限、最後に表示した日時、表示回数）を分離する。表示制御の都合だけでFactの意味状態を変更しない。具体的なTableやColumnは設計文書で定義する。
+未処理候補があっても、記録・相談・判断の通常利用をブロックしない。
 
-## 9. 確認Cardと段階的開示
+### AC-008 Current Stateと最近の変化は主Actionより下に表示する
 
-通常Cardには分野、候補内容、確認が必要な理由、主要操作を表示する。Confidence数値、Fact type、Category slug、Extractor、Model、Prompt version、Document ID、Chunk ID、Internal validation state、長いEvidence全文は初期表示しない。
+Current Stateの要約、最近の変化、結果待ち・後日評価待ちは主Actionの補助情報としてBelow the foldに置く。
 
-詳細は候補内容、確認理由、根拠、技術詳細の順に段階的に開示する。根拠には原文Preview・日時・出典を含めてよい。技術詳細は初期状態で閉じる。
+## 4. 確認Inboxの責務
 
-## 10. Sensitive情報と管理操作
+確認InboxはMemoryの採否・訂正・Conflict解消に限定する。対象はFact確認、Memory Proposal、Current更新候補、Conflict解消候補とする。Decision結果入力、Decision後日評価、通常Draft、保存失敗の再試行、外部AI送信前確認、Personal Inference候補、週次レビューは対象外とし、それぞれAction Centerまたは専用画面で扱う。
 
-資産、健康、人間関係等のSensitive分野は、Todayおよび確認Inbox一覧では本文を必要最小限にする。Public Screenshotでは必ずSynthetic Dataを使用する。
+### RI-001 Inbox対象範囲をMemory確認に限定する
 
-Evidenceによる自動判定、記憶品質の再監査、既存記憶の修復、会話の再解析、Personal Inferenceの再生成は確認Inboxに置かず、「設定」または「記憶メンテナンス」へ分離して初期状態で折りたたむ。破壊的または大量変更を伴う操作には確認を必要とする。
+確認Inboxへ対象外の項目を無条件に混在させない。Personal Inference候補を将来追加する場合は、別Bucketまたは別画面を要件化してから追加する。
 
-## 11. 名称、Draft、Error
+### RI-002 Urgent・Normal・Deferredを分離する
 
-「確認Inbox」と「週次レビュー」を明確に区別し、単に「レビュー」だけで両機能を表現しない。
+初期表示はUrgentとする。Urgentは、Conflict、Current Fact置換候補、Currentに利用されるMutable Factの矛盾、現在値へ影響する数値外れ値、未確認Actual Transaction、14日以内に有効化・期限到来するscheduleまたはplan、Active Decisionが明示参照する未確認候補に限定する。Normalはその他の`pending`候補、Deferredは`review_state=deferred`または未来の`snoozed_until`を持つ候補とする。
 
-記録、相談、結果、後日評価、利用Feedbackの未送信入力はTodayの主Action候補として扱える。画面移動、Reload、保存失敗でDraftを失わず、成功時だけ削除する。保存失敗後に入力が残る場合は、再試行または入力再開を主Actionとして案内できる。通常画面にTracebackやSQL Errorを表示しない。
+### RI-003 決定的な並び順
 
-## 12. 件数・自動確認・Production利用
+同じデータ状態に対して同じ結果になる並び順とする。priority class、Currentへの影響、conflictの有無、意味上の日時、作成日時、IDの順で評価する。
 
-確認候補はCursor等で段階的に取得し、全候補を一度にClientへ読み込まない。大量Backlogでも初期表示の情報量と応答時間が候補総数に比例して無制限に増えないようにする。
+### RI-004 ランダム順を使用しない
 
-本人の明示確認が必要な候補をAIが本人の代わりに一括承認しない。一括確認を追加する場合は、明示Evidence、非Conflict、非Sensitive等の安全条件を別途要件化する。
+候補の表示順やUrgent判定にランダム値を使用しない。LLMの自由文章評価だけでUrgentにしない。
 
-本番利用時には本人が少量ずつ処理できるようにする。初回Production受入はTodayの主Action確認、確認Inboxを開く、1件の確認、1件の保留、Reload後の状態確認に限定し、Production DBに対する一括処理を含めない。
+### RI-005 Focus Mode
+
+Focus Modeでは候補を一件ずつ処理でき、「正しい」「修正する」「違う」「後で」を提供する。3件連続処理後は「今日はここまで」「続けて確認する」を表示する。「今日はここまで」を選んでも候補状態を変更しない。
+
+## 5. SnoozeとReview状態
+
+### RI-006 一時Snoozeはpendingを維持する
+
+「明日まで表示しない」「1週間表示しない」の一時Snoozeは`review_state=pending`を維持し、再表示期限だけを設定する。Factの意味状態を変更しない。
+
+### RI-007 期限なし保留だけをdeferredとする
+
+「期限を決めず保留する」を選んだ場合だけ`review_state=deferred`とする。期限なし保留には再表示期限を設定しない。
+
+### RI-008 Snooze期限前に再表示しない
+
+一時Snoozeした候補を、期限前のReload、再起動、主Action、Urgentへ再表示しない。
+
+### RI-009 Reload後もSnoozeを維持する
+
+Snoozeによる表示制御はReload後も維持する。
+
+### RI-010 legacy deferredを自動pending化しない
+
+既存の`deferred`候補を期限経過だけで自動的に`pending`へ戻さない。ユーザーが「確認を再開」を選んだ場合に限り`pending`へ戻してよい。
+
+`confirmed`と`rejected`は通常Queueから除外する。表示制御の都合でFactやEvidence本文を変更しない。具体的なTable・ColumnはDesignで定義する。
+
+## 6. 表示・安全性・規模
+
+### RI-011 技術情報は初期状態で閉じる
+
+通常Cardには分野、候補内容、確認理由、主要操作を表示する。技術情報、長いEvidence全文、Confidence数値等は初期状態で閉じ、候補内容、確認理由、根拠、技術詳細の順に段階的に開示する。
+
+### RI-012 管理・修復操作をInboxから分離する
+
+Evidenceによる自動判定、記憶品質の再監査、既存記憶の修復、会話の再解析、Personal Inference再生成を確認Inboxに置かない。設定または記憶メンテナンスへ分離し、破壊的・大量変更を伴う操作には確認を必要とする。
+
+### RI-013 Sensitive詳細は本人操作後に表示する
+
+Sensitive分野は一覧でSafe Summaryを使用する。本人が内容または根拠の表示を明示的に選んだProduction詳細では、正誤判断に必要な実内容を表示できること。Public Screenshot、Public Fixture、Public SnapshotにはSynthetic Dataのみを使用する。
+
+### RI-014 大量Backlogでも初期表示量を制限する
+
+確認候補はCursor等で段階取得し、全候補を一度にClientへ読み込まない。50件以上の候補でもTodayは最大1件、Inbox初期表示は限定件数とし、初期DOM量と応答時間が候補総数に比例して無制限に増えないようにする。
+
+### RI-015 Inboxをゼロにすることを利用目標にしない
+
+確認Inboxをゼロにすることを日常利用の目標にせず、通常利用を確認作業でブロックしない。
+
+## 7. 名称とProduction利用
+
+「確認Inbox」と「週次レビュー」を明確に区別する。本番利用時には本人が少量ずつ処理できるようにし、Production DBに対する一括処理を受入手順へ含めない。

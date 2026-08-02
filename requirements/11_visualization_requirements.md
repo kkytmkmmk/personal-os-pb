@@ -65,7 +65,7 @@ considered
 
 ## 10. Adaptive Today / Domain表示
 
-TodayはCurrent summary、次に考える候補（最大3件）、最近の変化、判断中/結果待ちを優先し、技術監査情報を常時表示しない。PCではCurrentとNext/Contextを並列表示し、iPhoneでは1列・折りたたみContextとする。資産・旅行・住居・人間関係・判断の各画面もSummary → Current → Change/Decision → History → Evidenceの順で深掘りできること。
+Todayでは、Current StateやChangeを文章より速く理解できる場合にCardやTimelineを使用してよい。Todayの主Action数、補助候補、表示順の詳細は `12_daily_action_review_inbox_requirements.md` を正本とする。主Action以外の補助候補は、同要件に従って主導線を圧迫しない範囲で表示できる。PCではCurrentとContextを並列表示し、iPhoneでは1列・折りたたみContextとする。資産・旅行・住居・人間関係・判断の各画面もSummary → Current → Change/Decision → History → Evidenceの順で深掘りできること。
 
 ---
 

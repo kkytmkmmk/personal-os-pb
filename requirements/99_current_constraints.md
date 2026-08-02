@@ -2,6 +2,8 @@
 
 この文書は長期要件ではなく現在の実装制約を示す。
 
+最終更新日: 2026-08-02
+
 ## 1. 利用環境
 
 - Windows PC
@@ -21,14 +23,15 @@
 
 ## 4. 現在の優先順位
 
-1. Memory Correctness
-2. Entity / Timeline / Retrieval Correctness
-3. Personal Inference Correctness
-4. Local First / Security
-5. Personal Reasoning / Recommendation
-6. UI simplification
-7. External Context
-8. Visualization
+1. Production usability / data safety
+2. Memory correctness
+3. Today Action Center / Review Inbox simplification
+4. Entity / Timeline / Retrieval correctness
+5. Personal Inference correctness
+6. Local First / Security
+7. Personal Reasoning / Recommendation
+8. External Context
+9. Visualization
 
 ## 5. 現段階で後回し
 
@@ -36,3 +39,10 @@
 - Cloud常時稼働
 - 完全自動外部連携
 - AIによる購入/契約等の自動実行
+
+## 6. 次回見直し条件
+
+- 本人がProductionで1週間程度利用した
+- 重大なData Correctness問題が発生した
+- 外部連携へ着手する
+- Cloud公開方針を変更する

@@ -12,11 +12,21 @@ considered
 → decided
 → executed
 → result
+→ evaluated
 ```
 
 を区別する。
 
 会話で検討しただけのものを実行済みとしない。
+
+- `considered`: 検討を開始した
+- `candidate`: 選択肢または判断候補がある
+- `decided`: 本人が選択を確定した
+- `executed`: 本人が実行した、または実行Evidenceが確認された
+- `result`: 実行直後または結果が記録された
+- `evaluated`: 一定時間後の後日評価が記録された
+
+`lesson`、`next_time`、満足度、良かった点、後悔はLifecycle状態ではなく付随情報とする。ResultまたはEvaluationがない状態を許容し、AIが推測だけで状態を進めない。Decision ReplayもこのLifecycleを参照する。
 
 ## 3. Decisionで扱いたい情報
 

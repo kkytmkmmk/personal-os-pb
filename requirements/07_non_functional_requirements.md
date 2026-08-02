@@ -98,6 +98,8 @@ Done判定は `91_definition_of_done.md` に従う。
 
 候補総数が増えても、初期画面のDOM量が無制限に増えないこと。Production DBを自動E2Eで開かないこと。具体的なレスポンスタイム数値はTBDとする。
 
+Today Action Centerと確認Inboxの詳細な機能要件は `12_daily_action_review_inbox_requirements.md` を正本とする。
+
 ## 16. TBD
 
 以下は今後具体化する。

@@ -101,10 +101,29 @@ Population BenchmarkをDoneとするには、少なくとも以下を満たす�
 
 ## 13. Daily Action Center Acceptance
 
-Daily Action CenterをDoneとするには、Today最上部の主Actionが最大1件であり、Action理由が表示され、記録・相談をすぐ開始できること。DraftがServer候補より優先され、保存失敗後の入力を失わず、Current Fact全件一覧および確認候補全件がTodayの主要表示にないこと。Mobile初期Viewportで主Action・記録・相談を確認できること。
+詳細な操作手順は `docs/acceptance/action_center_review_inbox_acceptance.md` を参照する。Daily Action CenterをDoneとするには、少なくとも以下を満たす。
+
+- AC-001: Today最上部の主Actionが最大1件である
+- AC-002: Action理由が表示される
+- AC-003: Mobile初期Viewportから記録・相談を開始できる
+- AC-004: 保存失敗Draftが最優先候補になる
+- AC-005: 古い・無意味なDraftが主Actionを占有しない
+- AC-006: Todayの主要表示に確認候補全件がない
+- AC-007: 未処理候補が通常利用をブロックしない
+- AC-008: Current Stateと最近の変化が主Actionより下にある
 
 ## 14. Review Inbox Acceptance
 
-Review InboxをDoneとするには、Urgent・Normal・Deferredが区別され、初期表示がUrgentであること。ランダム順を使用せず、同じ状態なら同じ順番になること。Focus Modeで1件ずつ処理でき、Snooze後は期限前にTodayへ再表示されず、Reload後も維持されること。
+詳細な操作手順は `docs/acceptance/action_center_review_inbox_acceptance.md` を参照する。Review InboxをDoneとするには、少なくとも以下を満たす。
 
-さらに、`confirmed`・`rejected`はQueueから除外され、legacy `deferred`が自動的に`pending`化されず、技術情報は初期状態で閉じていること。管理・修復操作をInboxに置かず、50件以上のSynthetic BacklogでDesktop/Mobile E2Eが成功し、Sensitive本文をPublic Screenshotへ出さないこと。
+- RI-001: Inbox対象がMemory確認に限定される
+- RI-002: Urgent・Normal・Deferredが区別され、初期表示がUrgentである
+- RI-003 / RI-004: 同じ状態なら同じ順番で、ランダム順を使用しない
+- RI-005: Focus Modeで1件ずつ処理できる
+- RI-006 / RI-007: 一時Snoozeは`pending`を維持し、期限なし保留だけを`deferred`とする
+- RI-008 / RI-009: Snooze期限前に再表示せず、Reload後も維持する
+- RI-010: legacy `deferred`を自動的に`pending`化しない
+- RI-011 / RI-012: 技術情報を初期状態で閉じ、管理・修復操作をInboxに置かない
+- RI-013: Sensitive本文をPublic Screenshotへ出さず、本人操作後はProduction詳細で確認可能とする
+- RI-014: 50件以上のSynthetic BacklogでDesktop/Mobile Acceptanceが成功する
+- RI-015: Inboxをゼロにすることを利用目標にしない
