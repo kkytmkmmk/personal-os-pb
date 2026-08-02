@@ -246,7 +246,8 @@ def main() -> int:
             def review_fact(index: int, *, category: str = "life", state: str = "pending",
                             eligibility: str = "pending", validation: str = "pending",
                             fact_type: str = "preference", fact_key: str | None = None,
-                            status: str = "unknown", summary: str | None = None) -> int:
+                            status: str = "unknown", summary: str | None = None,
+                            value: dict[str, object] | None = None) -> int:
                 created = f"2026-06-{(index % 28) + 1:02d}T08:00:00+09:00"
                 fact_id = insert(connection, "facts", {
                     "document_id": document_id, "chunk_id": chunk_id, "source_chunk_id": chunk_id,
@@ -254,7 +255,7 @@ def main() -> int:
                     "retrieval_eligibility": eligibility, "validation_status": validation,
                     "category": category, "fact_type": fact_type,
                     "fact_key": fact_key or f"{category}.{fact_type}.review-{index}",
-                    "value_json": json.dumps({"choice": f"Synthetic {index}"}, ensure_ascii=False),
+                    "value_json": json.dumps(value or {"choice": f"Synthetic {index}"}, ensure_ascii=False),
                     "summary": summary or f"合成確認項目 {index}", "confidence": 0.58,
                     "truth_confidence": 0.58, "extractor": "synthetic-fixture", "extractor_model": "none",
                     "prompt_version": "ux-review-backlog-v1", "extracted_at": created,
@@ -273,7 +274,9 @@ def main() -> int:
                 return fact_id
 
             # Five explicit conflicts.
-            for index in range(1, 6):
+            review_fact(1, category="finance", eligibility="conflict", validation="conflict",
+                        summary="合成の資産確認候補", value={"amount": 123456, "currency": "JPY"})
+            for index in range(2, 6):
                 review_fact(index, eligibility="conflict", validation="conflict", summary=f"矛盾を確認する合成記憶 {index}")
             # Thirty-five ordinary reviews. Five are sensitive and therefore
             # remain masked in default API/UI responses.
@@ -292,6 +295,16 @@ def main() -> int:
                             status="current", summary=f"現在の合成住居条件 {index}")
                 review_fact(index, category="housing", fact_key=key,
                             summary=f"更新候補の合成住居条件 {index}")
+            proposal_entry = insert(connection, "entries", {
+                "kind": "memo", "title": "合成旅行候補", "body": "Sample温泉を次の候補として覚える",
+                "source": "manual", "tags": "[]", "status": "inbox", "created_at": "2026-07-20T09:00:00+09:00",
+                "updated_at": "2026-07-20T09:00:00+09:00",
+            })
+            insert(connection, "memory_proposals", {
+                "entry_id": proposal_entry,
+                "facts_json": json.dumps([{"category": "travel", "type": "preference", "summary": "Sample温泉が候補", "value": {"place": "Sample温泉"}}], ensure_ascii=False),
+                "policy": "confirm", "status": "pending", "created_at": "2026-07-20T09:00:00+09:00",
+            })
         connection.commit()
     print(f"Synthetic UX demo database created: {db_path}")
     return 0

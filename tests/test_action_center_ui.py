@@ -47,7 +47,9 @@ class ActionCenterUiStaticTests(unittest.TestCase):
             self.assertIn(label, self.js)
 
     def test_sensitive_default_is_masked(self):
-        self.assertIn('機微情報のため、一覧では原文を表示しません', self.js)
+        self.assertIn('機微情報のため内容を隠しています', self.js)
+        self.assertIn('内容を確認する', self.js)
+        self.assertNotIn('window.reviewFactsById', self.js)
 
     def test_maintenance_moves_to_closed_details(self):
         self.assertIn("details.id = 'memory-maintenance'", self.js)
@@ -59,8 +61,28 @@ class ActionCenterUiStaticTests(unittest.TestCase):
         self.assertIn("review: '週次レビュー'", self.app_js)
 
     def test_service_worker_uses_required_cache_version(self):
-        self.assertIn('personal-os-v3-phase-b-ux1-action-center-1', self.worker)
+        self.assertIn('personal-os-v3-phase-b-ux1-stabilization-3', self.worker)
         self.assertIn('/action-center.js', self.worker)
+
+    def test_inbox_uses_ten_item_pages_and_explicit_presentation(self):
+        self.assertIn("limit: '10'", self.js)
+        self.assertIn('さらに読み込む', self.js)
+        self.assertIn('/presented', self.js)
+
+    def test_focus_pause_after_three_items(self):
+        self.assertIn('processedInFocus >= 3', self.js)
+        self.assertIn('今日はここまで', self.js)
+
+    def test_draft_v2_has_required_metadata(self):
+        daily = (ROOT / "static" / "daily-ux.js").read_text(encoding="utf-8")
+        for field in ('updated_at', 'save_failed', 'hidden_until', 'route', 'focus'):
+            self.assertIn(field, daily)
+        self.assertNotIn('personal-os-failed-action', self.js)
+
+    def test_daily_ux_delegates_today_digest(self):
+        daily = (ROOT / "static" / "daily-ux.js").read_text(encoding="utf-8")
+        function = daily.split('function refreshDailyDigest()', 1)[1].split('\n', 1)[0]
+        self.assertIn('window.refreshActionCenter', function)
 
 
 if __name__ == "__main__":

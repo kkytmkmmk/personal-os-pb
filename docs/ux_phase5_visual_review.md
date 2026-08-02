@@ -1,5 +1,13 @@
 # UX Phase 5 Visual Review
 
+## 2026-08-02 Phase B-UX1 Stabilization 最終確認
+
+- Verification環境の独立Temporary SQLite DBでDesktop/Mobile E2Eを実行し、Microsoft EdgeとPlaywright Chromiumの両方で成功した。
+- 公開候補42枚を画像として目視確認し、`codex-visual-review`が2026-08-02T08:34:41.726136+00:00に承認した。全件がSynthetic Dataで、`reviewed=true`、`contains_sensitive_data=false`、現在のPNGとSHA-256が一致している。
+- 375px幅で保存失敗Draftの3操作が窮屈だったため、「再試行する」を全幅、「今回は表示しない」と「破棄」を2列に整理した。
+- 機微情報はデフォルトで値・根拠・原文をマスクし、明示操作後の詳細と「3件確認」区切りを別Screenshotで確認した。
+- Unit Test 202件が成功（1件はHostでSymlink作成不可のためskip）、Memory Quality Benchmarkは44/44、Secret/Public/Screenshot SafetyはPASSした。
+
 ## 実施条件
 
 - Verification環境（port 8877）と毎回生成する一時SQLite DB
@@ -24,15 +32,21 @@
 
 ![Desktop Focus確認](screenshots/ux-phase5/desktop-1280-review-focus.png)
 
+![Desktop 機微情報マスク](screenshots/ux-phase5/desktop-1280-review-sensitive-masked.png)
+
+![Desktop 機微情報詳細](screenshots/ux-phase5/desktop-1280-review-sensitive-detail.png)
+
+![Desktop 3件確認区切り](screenshots/ux-phase5/desktop-1280-review-three-complete.png)
+
 ![Mobile Action Center](screenshots/ux-phase5/mobile-390-action-center.png)
 
 ![Mobile 確認Inbox](screenshots/ux-phase5/mobile-390-review-inbox.png)
 
 ![Mobile 保留メニュー](screenshots/ux-phase5/mobile-390-review-snooze.png)
 
-50件以上の固定Synthetic Backlogで確認した。Todayは主Actionが1件、主Buttonが1件で、記録・相談・確認Inboxの3入口が最初のMobile Viewportに収まる。Inboxは10件の重要候補、35件の通常候補、15件の保留候補を本文一覧として積み上げず、先頭1件のFocus Cardを表示する。根拠と技術情報は閉じた状態で、機微候補は本文と原文Previewをマスクする。
+61件以上の固定Synthetic BacklogとMemory Proposalで確認した。Todayは主Actionが1件、主Buttonが1件で、記録・相談・確認Inboxの3入口が最初のMobile Viewportに収まる。Inboxは初回10件だけを取得し、先頭1件のFocus Cardを表示する。機微候補は本文・値・原文をマスクし、初期状態には「内容を確認する」「後で」だけがある。明示表示後にだけ実Summary、値、確認操作が現れ、「内容を閉じる」で実内容がDOMから消えることをBrowser E2Eでも確認した。
 
-目視確認では、非同期で追加されるカテゴリ監査がInboxへ入り込む問題と、Mobileの保留メニューが下部Navigationに隠れる問題を発見した。カテゴリ監査は管理の記憶メンテナンスへ移動し、保留メニューは下部Navigationより上へ表示するよう修正した。人口ベンチマークの補助文・金額・時間単位も通常画面では日本語表示へ統一した。
+目視確認では、Mobileでも主Action・記録・相談・確認Inboxが初期Viewportに収まり、保留メニューが下部Navigationより上へ表示された。機微情報の詳細表示前後と3件区切りは、ボタンの重なり、横Overflow、実データ露出がないことを画像で確認した。通常候補はTodayを占有せず、Inboxの件数は作業完了を強制する表現にしていない。
 
 ![Desktop Personal Space](screenshots/ux-phase5/desktop-1280-explore-space.png)
 
@@ -65,7 +79,7 @@ Timelineでは、意味的な日付、領域、日本語の種類ラベルを左
 - SheetのEsc、Backdrop、Focus Trap、Focus復帰、背景スクロール固定を共通化した。
 - Domain画面のCurrent/Recent/Decisions/History/Evidence構造とEmpty Stateを共通Rendererへ統一した。
 
-公開レビュー用の27画面は `screenshots/ux-phase5/manifest.json` に登録する。E2E生成直後はすべて `reviewed=false` とし、Synthetic Dataであることと `contains_sensitive_data=false` を確認した目視承認後だけ、ハッシュ・承認者・承認日時付きで公開前検査を通過する。
+公開レビュー画面は `screenshots/ux-phase5/manifest.json` に登録する。E2E生成直後はすべて `reviewed=false` とし、Synthetic Dataであることと `contains_sensitive_data=false` を確認した目視承認後だけ、ハッシュ・承認者・承認日時付きで公開前検査を通過する。
 
 ## 残課題
 

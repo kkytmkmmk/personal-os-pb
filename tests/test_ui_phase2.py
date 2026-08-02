@@ -13,6 +13,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         cls.css = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
         cls.sw = (ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
         cls.daily_ux = (ROOT / "static" / "daily-ux.js").read_text(encoding="utf-8")
+        cls.action_center = (ROOT / "static" / "action-center.js").read_text(encoding="utf-8")
 
     def test_router_owns_hash_navigation(self):
         self.assertIn("function navigateTo", self.app_js)
@@ -37,7 +38,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("legacyDecisionSheet", self.app_js)
 
     def test_service_worker_refreshes_phase2_assets(self):
-        self.assertIn("personal-os-v3-phase-b-ux1-action-center-1", self.sw)
+        self.assertIn("personal-os-v3-phase-b-ux1-stabilization-3", self.sw)
         self.assertIn('"/styles.css"', self.sw)
         self.assertIn('"/api-client.js"', self.sw)
         self.assertIn('"/app.js"', self.sw)
@@ -106,7 +107,7 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("window.personalOsSheets", self.daily_ux)
         self.assertIn("focusableIn", self.daily_ux)
         self.assertIn("classList.add('sheet-open')", self.daily_ux)
-        self.assertIn("personal-os-v3-phase-b-ux1-action-center-1", self.sw)
+        self.assertIn("personal-os-v3-phase-b-ux1-stabilization-3", self.sw)
 
     def test_capture_only_confirms_after_response_and_domain_renderer_is_shared(self):
         self.assertIn("保存しています…", self.daily_ux)
@@ -123,16 +124,15 @@ class UiPhase2StaticTests(unittest.TestCase):
         self.assertIn("let card = document.querySelector('#today-next-candidates');", self.index)
 
     def test_daily_digest_uses_a_dedicated_api_and_never_auto_sends(self):
-        self.assertIn("/api/today/digest", self.daily_ux)
-        self.assertIn("id = 'today-digest'", self.daily_ux)
-        self.assertIn("今日の一言", self.daily_ux)
-        self.assertIn("次にやること", self.daily_ux)
-        self.assertIn("最近変わったこと", self.daily_ux)
-        self.assertIn("思い出しておくこと", self.daily_ux)
-        self.assertIn("相談候補", self.daily_ux)
-        self.assertIn("data-digest-prompt", self.daily_ux)
-        self.assertIn("input.value = prompt", self.daily_ux)
-        self.assertNotIn("chat-form').requestSubmit", self.daily_ux)
+        self.assertIn("/api/today/digest", self.action_center)
+        self.assertIn("digest.id = 'today-digest'", self.action_center)
+        self.assertIn("今日の一言", self.action_center)
+        self.assertIn("最近変わったこと", self.action_center)
+        self.assertIn("相談候補", self.action_center)
+        self.assertIn("data-digest-prompt", self.action_center)
+        self.assertIn("field.value = button.dataset.digestPrompt", self.action_center)
+        self.assertNotIn("chat-form').requestSubmit", self.action_center)
+        self.assertIn("function refreshDailyDigest() { return window.refreshActionCenter?.(); }", self.daily_ux)
         self.assertIn("today-digest", self.app_js)
 
 

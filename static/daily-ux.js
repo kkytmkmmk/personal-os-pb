@@ -58,14 +58,41 @@
   function addDraft(field, key) {
     if (!field) return;
     const storageKey = `personal-os-draft-${key}`;
-    if (!field.value && sessionStorage.getItem(storageKey)) field.value = sessionStorage.getItem(storageKey);
-    field.addEventListener('input', () => sessionStorage.setItem(storageKey, field.value));
+    const route = key === 'chat' ? 'chat' : key.startsWith('decision-') ? 'decisions' : key === 'ux-feedback' ? 'settings' : 'home';
+    const focus = key === 'chat' ? '#chat-message' : key === 'memo' ? '#record-text' : '';
+    const read = () => {
+      const raw = sessionStorage.getItem(storageKey); if (!raw) return null;
+      try { const parsed = JSON.parse(raw); return parsed && typeof parsed.body === 'string' ? parsed : { body: raw }; }
+      catch { return { body: raw }; }
+    };
+    const write = patch => {
+      const previous = read() || {};
+      sessionStorage.setItem(storageKey, JSON.stringify({ version: 2, body: field.value,
+        updated_at: new Date().toISOString(), save_failed: false, hidden_until: null, route, focus, ...previous, ...patch }));
+    };
+    const existing = read(); if (!field.value && existing?.body) field.value = existing.body;
+    field.addEventListener('input', () => write({ body: field.value, updated_at: new Date().toISOString(), save_failed: false, hidden_until: null }));
     field.closest('form')?.addEventListener('submit', () => field.closest('form').dataset.draftKey = storageKey);
   }
 
   function clearDraftFor(form) {
     const key = form?.dataset.draftKey;
     if (key) sessionStorage.removeItem(key);
+  }
+
+  function markDraftFailed(form) {
+    const key = form?.dataset.draftKey; if (!key) return;
+    const raw = sessionStorage.getItem(key); if (!raw) return;
+    try {
+      const draft = JSON.parse(raw); if (!draft || typeof draft.body !== 'string') return;
+      draft.save_failed = true; draft.hidden_until = null; sessionStorage.setItem(key, JSON.stringify(draft));
+    } catch { /* Legacy drafts have no reliable update time and are not promoted. */ }
+  }
+
+  function markStoredDraftFailed(storageKey) {
+    const raw = sessionStorage.getItem(storageKey); if (!raw) return;
+    try { const draft = JSON.parse(raw); if (draft && typeof draft.body === 'string') { draft.save_failed = true; draft.hidden_until = null; sessionStorage.setItem(storageKey, JSON.stringify(draft)); } }
+    catch { /* Legacy drafts remain restorable but are not promoted. */ }
   }
 
   const mutationConfig = {
@@ -109,14 +136,16 @@
     window.addEventListener('personal-os-api-response', event => {
       $$('#record-form,#screenshot-form,#benchmark-import-form,#decision-outcome-form').forEach(form => {
         if (form.dataset.submitting !== 'true' || !matchesMutation(form, event.detail)) return;
-        if (!event.detail.ok) { setMutationState(form, 'error', '保存できませんでした。入力内容は保持しています。'); return; }
+        if (!event.detail.ok) { markDraftFailed(form); setMutationState(form, 'error', '保存できませんでした。入力内容は保持しています。'); return; }
         setMutationState(form, 'success', mutationFor(form).success);
         clearDraftFor(form);
       });
     });
     window.addEventListener('personal-os-api-error', event => {
+      if (event.detail?.path === '/api/chat') markStoredDraftFailed('personal-os-draft-chat');
       $$('#record-form,#screenshot-form,#benchmark-import-form,#decision-outcome-form').forEach(form => {
         if (form.dataset.submitting === 'true' && matchesMutation(form, event.detail)) {
+          markDraftFailed(form);
           setMutationState(form, 'error', '保存できませんでした。入力内容は保持しています。');
         }
       });
@@ -209,32 +238,7 @@
     }));
   }
 
-  async function refreshDailyDigest() {
-    const page = $('#today');
-    if (!page) return;
-    let card = $('#today-digest');
-    if (!card) { card = document.createElement('section'); card.id = 'today-digest'; card.className = 'card today-digest'; const actions = $('#today-daily-actions'); (actions || page.firstElementChild)?.after(card); }
-    card.setAttribute('aria-busy', 'true');
-    try {
-      const response = await fetch('/api/today/digest');
-      if (!response.ok) throw new Error('今日のダイジェストを取得できません');
-      const digest = await response.json();
-      const next = Array.isArray(digest.next_actions) ? digest.next_actions.slice(0, 3) : [];
-      const recent = Array.isArray(digest.recent_changes) ? digest.recent_changes.slice(0, 3) : [];
-      const remember = Array.isArray(digest.remember) ? digest.remember.slice(0, 2) : [];
-      const prompts = Array.isArray(digest.consultation_prompts) ? digest.consultation_prompts.slice(0, 3) : [];
-      const hasContent = next.length || recent.length || remember.length || prompts.length;
-      if (!hasContent) {
-        card.innerHTML = `<h2>今日のダイジェスト</h2>${digestEmpty()}`;
-        bindDigestActions(card);
-        return;
-      }
-      const rows = (items, renderer, emptyText) => items.length ? items.map(renderer).join('') : `<p class="help">${emptyText}</p>`;
-      card.innerHTML = `<section class="digest-headline"><h2>今日の一言</h2><p>${escapeHtml(digest.headline?.text || '最近の大きな変化はまだありません')}</p>${digestBasis(digest.headline)}</section><section class="digest-section"><h3>次にやること</h3>${rows(next, item => `<article class="timeline-row"><div><b>${escapeHtml(item.title || '確認すること')}</b><span class="source">${escapeHtml(item.state_label || '')}</span></div><button type="button" class="secondary" data-digest-decision="${Number(item.id)}" data-digest-decision-state="${escapeHtml(item.state_label || '')}">${escapeHtml(item.action || '確認する')}</button></article>`, '今すぐ対応が必要なことはありません。')}</section><section class="digest-section"><div class="digest-section-heading"><h3>最近変わったこと</h3><button type="button" class="secondary" data-digest-timeline>すべての変化を見る</button></div>${rows(recent, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '記憶の更新')}</b><span>${escapeHtml(item.change_type || '更新')}</span>${digestBasis(item)}</article>`, '最近の変化はまだありません。')}</section><section class="digest-section"><h3>思い出しておくこと</h3>${rows(remember, item => `<article class="timeline-row"><b>${escapeHtml(item.text || '確認済みの記録')}</b>${digestBasis(item)}</article>`, '確認できる記憶はまだありません。')}</section><section class="digest-section"><h3>相談候補</h3>${rows(prompts, item => `<button type="button" class="secondary digest-prompt" data-digest-prompt="${escapeHtml(item.text || '')}">${escapeHtml(item.text || '相談する')}</button>`, '今の記録から作れる相談候補はまだありません。')}</section>`;
-      bindDigestActions(card);
-    } catch { card.innerHTML = '<h2>今日のダイジェスト</h2><p class="help">いまはダイジェストを確認できません。入力内容は失われていません。</p>'; }
-    finally { card.removeAttribute('aria-busy'); }
-  }
+  function refreshDailyDigest() { return window.refreshActionCenter?.(); }
 
   function streamlineConsultation() {
     const page = $('#chat'), result = $('#chat-result');
@@ -641,5 +645,5 @@
   // Legacy inline scripts can finish their own first render after the deferred
   // bundle. Re-apply the decision renderer once the document is fully ready.
   window.addEventListener('load', streamlineDecisions, { once: true });
-  window.refreshTodayDigest = refreshDailyDigest;
+  window.refreshTodayDigest = () => window.refreshActionCenter?.();
 })();

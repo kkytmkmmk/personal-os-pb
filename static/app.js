@@ -263,7 +263,7 @@
       travel: ['旅行', '訪問履歴と次の候補を見る'],
       housing: ['住居', '現在の住まいと比較材料を見る'],
       people: ['人間関係', '明示されたやりとりと予定を見る'],
-      decisions: ['判断', 'DecisionとResultの履歴を見る'],
+      decisions: ['判断', '判断と結果の履歴を見る'],
       settings: ['管理', '取込・AI・バックアップを管理する'],
     };
     Object.entries(headers).forEach(([id, [title, subtitle]]) => {

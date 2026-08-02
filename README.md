@@ -20,9 +20,9 @@ See the [Decision Replay visual review](docs/decision_replay_visual_review.md) f
 
 ## Today Action Center and review inbox
 
-- Today shows exactly one next action, its reason, and one primary operation. Browser drafts and failed saves take priority over server-side result, evaluation, review, execution and decision queues.
-- The review inbox separates urgent, normal and deferred candidates, uses deterministic oldest-first ordering, and supports one-day, one-week and indefinite snooze without changing the underlying Fact lifecycle.
-- Sensitive review summaries and evidence are masked by default. Maintenance and bulk repair tools stay under the closed management section.
+- Today shows exactly one next action and its reason. Failed Drafts come first; short, old, hidden and timestamp-less Drafts do not occupy Today. Normal reviews remain in the Inbox.
+- The review inbox includes Fact reviews and Memory Proposals, fetches 10 items at a time with an opaque cursor, and pauses after every three completed reviews.
+- One-day and one-week snoozes keep `review_state=pending`; only indefinite deferral uses `deferred`. Sensitive content is fetched with `no-store` only after an explicit user action and is removed from the DOM when closed.
 - See [Today Action Center](docs/action_center.md), [review inbox](docs/review_inbox.md), and [first real use](docs/first_real_use.md).
 
 ![Synthetic desktop Action Center](docs/screenshots/ux-phase5/desktop-1280-action-center.png)

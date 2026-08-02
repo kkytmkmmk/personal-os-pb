@@ -1,5 +1,7 @@
 # UI/UX フェーズ2〜5 トレーサビリティ
 
+> 2026-08-02のPhase B-UX1 Stabilizationで、Desktop/Mobileの独立DB E2E、Microsoft Edge/Playwright Chromiumの両Browser、機微情報の`no-store`詳細、保存・再読込、Snooze、42枚の承認済みSynthetic Screenshotを再検証した。Service Worker cacheは`personal-os-v3-phase-b-ux1-stabilization-3`である。
+
 対象は `requirements/` を変更せずに実装した日常利用UXの後半フェーズです。すべての確認はVerification DBとポート8877を前提とし、本番DBは使用しません。
 
 | フェーズ | 要件 | 実装 | テスト/確認 | 状態 |
@@ -43,10 +45,11 @@
 | 要件 | 実装 | 検証 | 状態 |
 |---|---|---|---|
 | Todayの主Actionを1件へ統合 | `action_center_projection()` / `GET /api/action-center` / `static/action-center.js` | Backend unit / Desktop・Mobile Browser E2E | Done |
-| Draft・保存失敗を最優先 | `sessionStorage`のDraft検出とClient override | UI static / Browser E2E | Done |
-| 確認候補を決定的に分類 | `review_inbox_projection()` / urgent・normal・deferred | 25 backend tests / 50件超backlog E2E | Done |
-| Snoozeとlegacy deferred保護 | `fact_review_queue_state` / `PATCH /api/facts/{id}/review` | Unit / Reloadを含むMobile E2E | Done |
-| Focus Mode・機微情報Mask | `static/action-center.js` | Desktop・Mobile Screenshot / Browser assertion | Done |
+| Draft・保存失敗を最優先 | Draft v2の日時・失敗・非表示metadataとClient override | UI static / Browser E2E | Done |
+| 確認候補を決定的に分類 | 限定Urgent / sort-key Cursor / 初回10件 | Backend tests / 61件backlog E2E | Done |
+| Snoozeとlegacy deferred保護 | `pending + one_day/one_week` / `deferred + indefinite` | Unit / ReloadとDB assertionを含むMobile E2E | Done |
+| Focus Mode・機微情報Mask | 明示`no-store`詳細、閉鎖時破棄、3件区切り | Desktop Screenshot / Browser assertion | Done |
+| Memory Proposal統合 | Apply・修正Apply・Discard、独立表示metadata | Unit / Desktop E2E | Done |
 | 管理操作の分離 | 管理画面の閉じた「記憶メンテナンス」 | UI static / Screenshot | Done |
-| 公開画面証跡 | 6枚の追加Synthetic ScreenshotとManifest | 39枚を実画像で目視し、Hash付き承認 / Screenshot Safety PASS | Done |
+| 公開画面証跡 | 9枚のAction Center/Inbox Synthetic ScreenshotとManifest | 実画像目視、Hash付き承認、Screenshot Safety | Done |
 - 相談の不足情報は最大3件で、Factを自動作成しない。

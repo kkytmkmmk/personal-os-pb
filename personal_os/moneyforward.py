@@ -103,7 +103,9 @@ def moneyforward_projection(database_path: str | Path | None, *, transaction_lim
 
             snapshot = connection.execute(
                 """SELECT id,group_id,date,refresh_completed,updated_at FROM daily_snapshots
+                   WHERE group_id=?
                    ORDER BY date DESC,refresh_completed DESC,id DESC LIMIT 1""",
+                (group_id,),
             ).fetchone()
             holdings: list[dict[str, object]] = []
             if snapshot:
@@ -115,11 +117,12 @@ def moneyforward_projection(database_path: str | Path | None, *, transaction_lim
                        JOIN holdings h ON h.id=hv.holding_id
                        JOIN accounts a ON a.id=h.account_id
                        JOIN group_accounts ga ON ga.account_id=a.id AND ga.group_id=?
+                       JOIN daily_snapshots ds ON ds.id=hv.snapshot_id AND ds.group_id=ga.group_id
                        LEFT JOIN asset_categories ac ON ac.id=h.category_id
                        WHERE hv.snapshot_id=? AND COALESCE(h.is_active,1)=1
                          AND COALESCE(a.is_active,1)=1
                        ORDER BY ABS(COALESCE(hv.amount,0)) DESC,h.id DESC LIMIT 200""",
-                    (snapshot["group_id"], snapshot["id"]),
+                    (group_id, snapshot["id"]),
                 ).fetchall()
                 holdings = [
                     {

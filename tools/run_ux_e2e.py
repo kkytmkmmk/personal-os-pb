@@ -356,6 +356,9 @@ def verify_daily_digest(page: Any, directory: Path, manifest: list[dict[str, Any
     page.locator("#today-digest .digest-headline").wait_for(state="visible", timeout=5000)
     screenshot(page, directory, manifest, f"{prefix}-today-digest", "#today", "daily-digest", viewport)
     if mobile:
+        secondary = page.locator("#today-digest .digest-secondary")
+        if secondary.count() and not secondary.get_attribute("open"):
+            secondary.locator("summary").click()
         prompt = page.locator("#today-digest [data-digest-prompt]").first
         if prompt.count() == 0:
             raise E2EFailure("synthetic daily digest did not render a consultation prompt")
@@ -388,9 +391,12 @@ def verify_empty_daily_digest(page: Any, database: Path, directory: Path, manife
     page.locator("#home").wait_for(state="visible")
 
 
-def verify_action_center_review_inbox(page: Any, directory: Path, manifest: list[dict[str, Any]],
+def verify_action_center_review_inbox(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]],
                                       prefix: str, viewport: tuple[int, int], *, mobile: bool) -> None:
     """Exercise one-action Today and the real deterministic Review Inbox."""
+    page.evaluate("""() => Object.keys(sessionStorage)
+      .filter(key => key.startsWith('personal-os-draft-'))
+      .forEach(key => sessionStorage.removeItem(key))""")
     route(page, "today")
     page.locator("#today-daily-actions [data-action-primary]").wait_for(state="visible", timeout=5000)
     if page.locator("#today-daily-actions [data-action-primary]").count() != 1:
@@ -402,15 +408,25 @@ def verify_action_center_review_inbox(page: Any, directory: Path, manifest: list
     if prefix in {"desktop-1280", "mobile-390"}:
         screenshot(page, directory, manifest, f"{prefix}-action-center", "#today", "action-center", viewport)
 
-    # A client-only draft outranks every server action and routes back to its
-    # form without being sent automatically.
-    draft_value = page.evaluate("async () => { sessionStorage.setItem('personal-os-draft-memo','Synthetic unfinished memo'); await window.refreshActionCenter?.(); return sessionStorage.getItem('personal-os-draft-memo'); }")
+    # Draft v2 ignores short/old content, prioritizes a failed save, and routes
+    # back to the correct form without sending automatically.
+    page.evaluate("""async () => { const old=new Date(Date.now()-8*86400000).toISOString(); sessionStorage.setItem('personal-os-draft-chat',JSON.stringify({version:2,body:'short',updated_at:new Date().toISOString(),save_failed:false,hidden_until:null,route:'chat',focus:'#chat-message'})); sessionStorage.setItem('personal-os-draft-ux-feedback',JSON.stringify({version:2,body:'Synthetic old feedback draft',updated_at:old,save_failed:false,hidden_until:null,route:'settings',focus:''})); await window.refreshActionCenter?.(); }""")
+    page.wait_for_timeout(80)
+    if "書きかけ" in page.locator("#today-daily-actions h2").inner_text():
+        raise E2EFailure("short or old draft incorrectly occupied the Today action")
+    draft_value = page.evaluate("""async () => { const draft={version:2,body:'Synthetic unfinished memo',updated_at:new Date().toISOString(),save_failed:false,hidden_until:null,route:'home',focus:'#record-text'}; sessionStorage.setItem('personal-os-draft-memo',JSON.stringify(draft)); await window.refreshActionCenter?.(); return JSON.parse(sessionStorage.getItem('personal-os-draft-memo')).body; }""")
     if draft_value != "Synthetic unfinished memo":
         raise E2EFailure("client draft was not retained before Action Center refresh")
     page.wait_for_timeout(120)
     draft_state = page.evaluate("() => ({ text: document.querySelector('#today-daily-actions')?.textContent || '', keys: Object.keys(sessionStorage) })")
     if "書きかけの記録" not in draft_state["text"]:
         raise E2EFailure(f"client draft did not override the server action: {draft_state}")
+    page.evaluate("""async () => { const key='personal-os-draft-chat'; const draft=JSON.parse(sessionStorage.getItem(key)); draft.body='Synthetic failed consultation draft'; draft.save_failed=true; sessionStorage.setItem(key,JSON.stringify(draft)); await window.refreshActionCenter?.(); }""")
+    page.wait_for_timeout(80)
+    if "保存に失敗" not in page.locator("#today-daily-actions").inner_text():
+        raise E2EFailure("save_failed draft did not outrank the recent normal draft")
+    page.evaluate("() => sessionStorage.removeItem('personal-os-draft-chat')")
+    page.evaluate("() => window.refreshActionCenter?.()")
     page.locator("#today-daily-actions [data-action-primary]").click()
     page.locator("#home").wait_for(state="visible")
     page.evaluate("() => { sessionStorage.removeItem('personal-os-draft-memo'); }")
@@ -433,6 +449,10 @@ def verify_action_center_review_inbox(page: Any, directory: Path, manifest: list
             page.locator("#review-inbox-focus [data-review-period='one_day']").click()
         if not deferred.value.ok:
             raise E2EFailure(f"Review snooze failed: {deferred.value.status}")
+        with sqlite3.connect(database) as connection:
+            state = connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (first_id,)).fetchone()[0]
+        if state != "pending":
+            raise E2EFailure(f"temporary snooze changed review state to {state}")
         page.wait_for_function("previous => document.querySelector('#review-inbox-focus [data-review-id]')?.dataset.reviewId !== previous", arg=first_id, timeout=5000)
         reload_app(page); route(page, "verify")
         page.locator("[data-review-bucket='deferred']").click()
@@ -440,14 +460,69 @@ def verify_action_center_review_inbox(page: Any, directory: Path, manifest: list
         page.locator("#review-inbox-list-toggle").click()
         page.wait_for_function("expected => [...document.querySelectorAll('#review-inbox-focus [data-review-id],#review-inbox-list [data-review-id]')].some(node => node.dataset.reviewId === expected)", arg=first_id, timeout=5000)
     else:
-        page.locator("#review-inbox-list-toggle").click()
+        if prefix != "desktop-1280":
+            page.locator("#review-inbox-list-toggle").click()
+            if page.locator("#review-inbox-focus [data-review-id],#review-inbox-list [data-review-id]").count() > 10:
+                raise E2EFailure("secondary viewport rendered more than one bounded review page")
+            assert_layout(page, mobile=False)
+            return
+        if page.locator("#review-inbox-focus [data-review-state]").count() != 0:
+            raise E2EFailure("sensitive review exposed confirmation before explicit detail request")
+        if prefix == "desktop-1280": screenshot(page, directory, manifest, f"{prefix}-review-sensitive-masked", "#verify", "review-sensitive-masked", viewport)
+        with page.expect_response(lambda response: f"/api/review-inbox/{first_id}/detail" in response.url, timeout=8000) as detail:
+            page.locator("#review-inbox-focus [data-review-reveal]").click()
+        if "no-store" not in (detail.value.headers.get("cache-control") or "").lower():
+            raise E2EFailure("sensitive review detail response was cacheable")
+        if not detail.value.ok or page.locator("#review-inbox-focus").inner_text().find("合成の資産確認候補") < 0:
+            raise E2EFailure("sensitive review detail was not revealed after the explicit action")
         if prefix == "desktop-1280":
+            screenshot(page, directory, manifest, f"{prefix}-review-sensitive-detail", "#verify", "review-sensitive-detail", viewport)
             screenshot(page, directory, manifest, f"{prefix}-review-focus", "#verify", "review-focus", viewport)
-        with page.expect_response(lambda response: "/api/facts/" in response.url and response.url.endswith("/review") and response.request.method == "PATCH", timeout=8000) as reviewed:
-            page.locator("#review-inbox-focus [data-review-state='confirmed']").click()
-        if not reviewed.value.ok:
-            raise E2EFailure(f"Review confirmation failed: {reviewed.value.status}")
-        page.wait_for_function("previous => document.querySelector('#review-inbox-focus [data-review-id]')?.dataset.reviewId !== previous", arg=first_id, timeout=5000)
+        page.locator("#review-inbox-focus [data-review-close]").click()
+        if "合成の資産確認候補" in page.locator("#review-inbox-focus").inner_text():
+            raise E2EFailure("closing sensitive detail left the real summary in the DOM")
+        page.locator("#review-inbox-focus [data-review-reveal]").click()
+        page.locator("#review-inbox-focus [data-review-correct]").wait_for(state="visible", timeout=5000)
+        dialog_answers = ["合成の資産確認候補（修正済み）", '{"amount":654321,"currency":"JPY"}']
+        def answer_correction(dialog: Any) -> None:
+            dialog.accept(dialog_answers.pop(0))
+        page.on("dialog", answer_correction)
+        with page.expect_response(lambda response: response.url.endswith(f"/api/facts/{first_id}") and response.request.method == "PATCH", timeout=8000) as corrected:
+            page.locator("#review-inbox-focus [data-review-correct]").click()
+        page.remove_listener("dialog", answer_correction)
+        if not corrected.value.ok:
+            raise E2EFailure(f"sensitive correction failed: {corrected.value.status}")
+        with sqlite3.connect(database) as connection:
+            stored = connection.execute("SELECT summary,value_json FROM facts WHERE id=?", (first_id,)).fetchone()
+        if stored[0] != "合成の資産確認候補（修正済み）" or json.loads(stored[1]).get("amount") != 654321:
+            raise E2EFailure("sensitive correction did not persist the explicitly reviewed values")
+        for _ in range(2):
+            current_id = page.locator("#review-inbox-focus [data-review-id]").get_attribute("data-review-id")
+            with page.expect_response(lambda response: response.url.endswith("/review") and response.request.method == "PATCH", timeout=8000) as reviewed:
+                page.locator("#review-inbox-focus [data-review-state='confirmed']").click()
+            if not reviewed.value.ok: raise E2EFailure(f"Review confirmation failed: {reviewed.value.status}")
+            if _ == 0: page.wait_for_function("previous => document.querySelector('#review-inbox-focus [data-review-id]')?.dataset.reviewId !== previous", arg=current_id, timeout=5000)
+        page.locator("#review-inbox-focus .review-pause").wait_for(state="visible", timeout=5000)
+        if prefix == "desktop-1280": screenshot(page, directory, manifest, f"{prefix}-review-three-complete", "#verify", "review-three-complete", viewport)
+        page.locator("#review-inbox-focus [data-review-continue]").click()
+        page.locator("[data-review-bucket='normal']").click()
+        page.locator("#review-inbox-list-toggle").click()
+        first_page_count = page.locator("#review-inbox-focus [data-review-id],#review-inbox-list [data-review-id]").count()
+        if first_page_count > 10: raise E2EFailure(f"Review Inbox initial page rendered {first_page_count} items")
+        if page.locator("#review-inbox-load-more:visible").count():
+            page.locator("#review-inbox-load-more").click()
+            page.wait_for_function("count => document.querySelectorAll('#review-inbox-focus [data-review-id],#review-inbox-list [data-review-id]').length > count", arg=first_page_count, timeout=5000)
+        while page.locator("[data-review-kind='memory_proposal']").count() == 0 and page.locator("#review-inbox-load-more:visible").count():
+            page.locator("#review-inbox-load-more").click(); page.wait_for_timeout(180)
+        proposal = page.locator("[data-review-kind='memory_proposal']").first
+        if proposal.count() == 0: raise E2EFailure("pending memory proposal did not appear in Review Inbox")
+        proposal_id = proposal.get_attribute("data-review-id")
+        with page.expect_response(lambda response: response.url.endswith(f"/api/memory-proposals/{proposal_id}/apply") and response.request.method == "POST", timeout=8000) as applied:
+            proposal.locator("[data-proposal-apply]").click()
+        if not applied.value.ok: raise E2EFailure(f"memory proposal apply failed: {applied.value.status}")
+        with sqlite3.connect(database) as connection:
+            proposal_status = connection.execute("SELECT status FROM memory_proposals WHERE id=?", (proposal_id,)).fetchone()[0]
+        if proposal_status != "applied": raise E2EFailure("memory proposal did not persist its applied state")
     assert_layout(page, mobile=mobile)
 
 
@@ -585,10 +660,10 @@ def verify_empty_timeline(page: Any, database: Path, directory: Path, manifest: 
     page.locator("#home").wait_for(state="visible")
 
 
-def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
+def desktop_journey(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "desktop-1280" if viewport[0] == 1280 else "desktop-1440"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
-    verify_action_center_review_inbox(page, directory, manifest, prefix, viewport, mobile=False)
+    verify_action_center_review_inbox(page, database, directory, manifest, prefix, viewport, mobile=False)
     verify_daily_digest(page, directory, manifest, prefix, viewport, mobile=False)
     route(page, "home"); screenshot(page, directory, manifest, f"{prefix}-memory", "#memory", "default", viewport)
     if verify_persistence:
@@ -646,10 +721,10 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
     assert_layout(page)
 
 
-def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
+def mobile_journey(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "mobile-390" if viewport[0] == 390 else "mobile-375"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
-    verify_action_center_review_inbox(page, directory, manifest, prefix, viewport, mobile=True)
+    verify_action_center_review_inbox(page, database, directory, manifest, prefix, viewport, mobile=True)
     verify_daily_digest(page, directory, manifest, prefix, viewport, mobile=True)
     route(page, "today")
     screenshot(page, directory, manifest, f"{prefix}-bottom-nav", "#today", "bottom-navigation", viewport)
@@ -716,6 +791,7 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
     public_names = {
         "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
         "desktop-1280-action-center.png", "desktop-1280-review-inbox.png", "desktop-1280-review-focus.png",
+        "desktop-1280-review-sensitive-masked.png", "desktop-1280-review-sensitive-detail.png", "desktop-1280-review-three-complete.png",
         "desktop-1280-today-digest.png",
         "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
         "desktop-1280-decision-replay.png", "desktop-1280-decision-replay-evidence.png", "desktop-1280-ux-feedback.png", "desktop-1280-production-readiness.png",
@@ -787,8 +863,17 @@ def main() -> int:
     run_dir = RESULTS / "ux-phase5"
     work_manifest = run_dir / "manifest-work.json"
     if args.suite in {"all", "desktop"} and args.viewport_set != "secondary":
-        if run_dir.exists(): shutil.rmtree(run_dir)
-        run_dir.mkdir(parents=True)
+        # OneDrive can expose this ignored result directory as a protected
+        # reparse point. Keep the directory and clear only known generated
+        # files instead of trying to remove the directory itself.
+        run_dir.mkdir(parents=True, exist_ok=True)
+        for generated in run_dir.glob("*.png"):
+            generated.unlink()
+        generated_manifest = run_dir / "manifest.json"
+        if generated_manifest.is_file():
+            generated_manifest.unlink()
+        if work_manifest.is_file():
+            work_manifest.unlink()
     elif not work_manifest.is_file():
         raise E2EFailure("secondary/mobile suite needs a preceding suite so the review set remains complete")
     temp_root = Path(tempfile.mkdtemp(prefix="personal-os-ux-e2e-"))
@@ -833,8 +918,8 @@ def main() -> int:
                 page.on("pageerror", lambda error: console_errors.append(f"pageerror: {getattr(error, 'stack', None) or error}"))
                 for viewport in viewports:
                     page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
-                    if mobile: mobile_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))
-                    else: desktop_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (1280, 720))
+                    if mobile: mobile_journey(page, database, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))
+                    else: desktop_journey(page, database, run_dir, manifest, viewport, verify_persistence=viewport == (1280, 720))
                 if args.viewport_set != "secondary":
                     prefix = "mobile-390" if mobile else "desktop-1280"
                     page.set_viewport_size({"width": first[0], "height": first[1]})

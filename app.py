@@ -882,6 +882,10 @@ def correct_fact(fact_id: int, payload: dict[str, object]) -> dict[str, object]:
         ).fetchone()
         if not row:
             raise ValueError("Fact not found")
+        if canonical_domain(str(row["category"] or "other")) in {"finance", "relationship", "health"}:
+            supplied_summary = str(payload.get("summary", "")).strip()
+            if supplied_summary == "機微情報の確認が必要です":
+                raise ValueError("Masked review content cannot be used to correct a sensitive Fact")
         value = _fact_value(row)
         replacement_value = payload.get("value")
         if replacement_value is not None:
@@ -1507,6 +1511,17 @@ def initialize() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_fact_review_queue_snoozed
               ON fact_review_queue_state(snoozed_until, updated_at);
+            CREATE TABLE IF NOT EXISTS memory_proposal_queue_state (
+              proposal_id INTEGER PRIMARY KEY,
+              snoozed_until TEXT,
+              is_deferred INTEGER NOT NULL DEFAULT 0,
+              last_presented_at TEXT,
+              presentation_count INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(proposal_id) REFERENCES memory_proposals(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_proposal_queue_snoozed
+              ON memory_proposal_queue_state(snoozed_until, updated_at);
             CREATE TABLE IF NOT EXISTS action_center_snoozes (
               action_key TEXT PRIMARY KEY,
               snoozed_until TEXT,
@@ -1737,6 +1752,7 @@ def initialize() -> None:
             reclassify_generic_reference_facts(connection)
         record_schema_migrations(connection)
     migrate_action_center_review_inbox()
+    migrate_action_center_review_inbox_stabilization()
     if not run_startup_maintenance:
         # The schema checks above remain enabled. Large, already-migrated local
         # databases can defer the full Fact/Evidence re-audit to an explicit
@@ -1753,6 +1769,7 @@ def initialize() -> None:
     migrate_visualization_benchmark()
     migrate_decision_replay()
     migrate_action_center_review_inbox()
+    migrate_action_center_review_inbox_stabilization()
     backfill_fact_evidence()
     with db() as connection:
         backfill_fact_evidence_identities(connection)
@@ -3355,6 +3372,33 @@ def migrate_action_center_review_inbox() -> None:
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
             ("014_action_center_review_inbox", now()),
+        )
+
+
+def migrate_action_center_review_inbox_stabilization() -> None:
+    """Add proposal-only presentation metadata without changing user content."""
+    with db() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS memory_proposal_queue_state (
+              proposal_id INTEGER PRIMARY KEY,
+              snoozed_until TEXT,
+              is_deferred INTEGER NOT NULL DEFAULT 0,
+              last_presented_at TEXT,
+              presentation_count INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(proposal_id) REFERENCES memory_proposals(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_proposal_queue_snoozed
+              ON memory_proposal_queue_state(snoozed_until,updated_at);
+            """
+        )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(memory_proposal_queue_state)")}
+        if "is_deferred" not in columns:
+            connection.execute("ALTER TABLE memory_proposal_queue_state ADD COLUMN is_deferred INTEGER NOT NULL DEFAULT 0")
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
+            ("015_action_center_review_inbox_stabilization", now()),
         )
 
 
@@ -7539,14 +7583,38 @@ def _review_snooze_is_future(value: object) -> bool:
     return bool(parsed and parsed > datetime.now(timezone.utc))
 
 
+SENSITIVE_REVIEW_SUMMARY = "機微情報の確認が必要です"
+REVIEW_SCAN_LIMIT = 1000
+
+
+def _review_date_within_days(row: dict[str, object], days: int = 14) -> bool:
+    candidates = [row.get("occurred_on"), row.get("valid_from")]
+    try:
+        value = json.loads(str(row.get("value_json") or "{}"))
+    except json.JSONDecodeError:
+        value = {}
+    if isinstance(value, dict):
+        candidates.extend(value.get(key) for key in ("date", "occurred_on", "target_date", "due_date"))
+    today = datetime.now(timezone.utc).date()
+    for candidate in candidates:
+        parsed = _parsed_iso(candidate)
+        if parsed and today <= parsed.date() <= today + timedelta(days=days):
+            return True
+        text = str(candidate or "")[:10]
+        try:
+            parsed_date = datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if today <= parsed_date <= today + timedelta(days=days):
+            return True
+    return False
+
+
 def _review_bucket(row: dict[str, object], decision_fact_ids: set[int]) -> tuple[str, int, str]:
     """Classify a review deterministically without changing the Fact."""
     snoozed_until = row.get("snoozed_until")
     if str(row.get("review_state") or "") == "deferred":
-        # A finite snooze becomes eligible again after its deadline.  Legacy
-        # deferred rows have no queue metadata and remain deferred forever.
-        if not snoozed_until or _review_snooze_is_future(snoozed_until):
-            return "deferred", 0, "あとで確認するよう指定されています"
+        return "deferred", 0, "あとで確認するよう指定されています"
     elif _review_snooze_is_future(snoozed_until):
         return "deferred", 0, "あとで確認するよう指定されています"
 
@@ -7558,42 +7626,83 @@ def _review_bucket(row: dict[str, object], decision_fact_ids: set[int]) -> tuple
         return "urgent", 1, "現在の情報を更新する可能性があります"
     if int(row.get("id") or 0) in decision_fact_ids:
         return "urgent", 2, "相談や判断の根拠として参照された情報です"
+    reason_text = f"{row.get('validation_reason') or ''} {row.get('review_reason') or ''} {row.get('reason') or ''}".lower()
+    if validation in {"anomaly", "outlier"} or any(token in reason_text for token in ("anomaly", "outlier", "外れ値")):
+        return "urgent", 3, "現在値へ影響する数値の外れ値候補です"
+    if int(row.get("is_actual_transaction") or 0):
+        return "urgent", 4, "本人の実取引として抽出された未確認情報です"
     fact_type = str(row.get("fact_type") or "").lower()
-    value_text = str(row.get("value_json") or "").lower()
-    if fact_type in {"transaction", "asset_balance", "income", "schedule", "plan"} or any(
-        token in value_text for token in ('"amount"', '"date"', '"occurred_on"')
-    ):
-        return "urgent", 3, "金額・日付・予定など現在の状態に影響する情報です"
+    if fact_type in {"schedule", "plan"} and _review_date_within_days(row):
+        return "urgent", 5, "14日以内に予定日または期限を迎える情報です"
     return "normal", 0, str(row.get("review_reason") or row.get("reason") or "根拠を確認して確定できます")
 
 
+def _review_cursor_encode(key: tuple[object, ...]) -> str:
+    raw = json.dumps(list(key), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _review_cursor_decode(cursor: str | None) -> tuple[object, ...] | None:
+    if not cursor:
+        return None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        value = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Invalid cursor") from error
+    if not isinstance(value, list) or len(value) != 5:
+        raise ValueError("Invalid cursor")
+    return tuple(value)
+
+
+def _proposal_projection(row: dict[str, object]) -> dict[str, object]:
+    try:
+        facts = json.loads(str(row.get("facts_json") or "[]"))
+    except json.JSONDecodeError:
+        facts = []
+    facts = facts if isinstance(facts, list) else []
+    domains = [canonical_domain(str(item.get("category") or "other")) for item in facts if isinstance(item, dict)]
+    domain = domains[0] if domains else "other"
+    sensitive = any(item in {"finance", "relationship", "health"} for item in domains)
+    first = next((item for item in facts if isinstance(item, dict)), {})
+    summary = SENSITIVE_REVIEW_SUMMARY if sensitive else str(first.get("summary") or row.get("entry_title") or "保存候補を確認してください")[:500]
+    return {
+        "id": int(row["id"]), "proposal_id": int(row["id"]), "entry_id": int(row.get("entry_id") or 0), "item_kind": "memory_proposal",
+        "item_key": f"memory_proposal:{int(row['id'])}", "category": domain,
+        "domain_label": _digest_domain_label(domain), "bucket": "deferred" if int(row.get("is_deferred") or 0) or _review_snooze_is_future(row.get("snoozed_until")) else "normal",
+        "priority_reason": "AIが抽出した保存候補です", "sensitive": sensitive, "summary": summary,
+        "value_json": "{}", "evidence": "", "document_title": "非表示" if sensitive else str(row.get("entry_title") or "記録"),
+        "evidence_count": len(facts), "created_at": str(row.get("created_at") or ""),
+        "presentation_count": int(row.get("presentation_count") or 0),
+        "_priority": 20, "_sort_time": str(row.get("created_at") or ""),
+    }
+
+
 def review_inbox_projection(
-    bucket: str = "urgent", domain: str = "", limit: int = 20,
-    cursor: str | None = None, *, mark_presented: bool = False,
+    bucket: str = "urgent", domain: str = "", limit: int = 10,
+    cursor: str | None = None,
 ) -> dict[str, object]:
     """Project pending reviews into deterministic urgent/normal/deferred queues."""
     if bucket not in {"urgent", "normal", "deferred", "all"}:
         raise ValueError("Invalid review bucket")
     limit = max(1, min(int(limit), 100))
-    try:
-        offset = max(0, int(cursor or 0))
-    except (TypeError, ValueError) as error:
-        raise ValueError("Invalid cursor") from error
+    after_key = _review_cursor_decode(cursor)
     requested_domain = canonical_domain(domain) if domain else ""
     with db() as connection:
         decision_fact_ids: set[int] = set()
-        for decision_row in connection.execute("SELECT related_fact_ids_json FROM decisions"):
+        for decision_row in connection.execute(
+            "SELECT related_fact_ids_json FROM decisions WHERE decision_state IN ('candidate','considered','decided','executed')"
+        ):
             try:
                 decision_fact_ids.update(int(value) for value in json.loads(decision_row[0] or "[]"))
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
-        rows = [dict(row) for row in connection.execute(
-            """SELECT f.id,f.category,f.fact_type,f.fact_key,f.occurred_on,f.value_json,f.summary,
+        fact_sql = """SELECT f.id,f.category,f.fact_type,f.fact_key,f.occurred_on,f.value_json,f.summary,
                       f.confidence,f.truth_confidence,f.subject_scope,f.resolved_entity_type,
-                      f.retrieval_eligibility,f.validation_status,f.extractor,f.extractor_model,
+                      f.retrieval_eligibility,f.validation_status,f.validation_reason,f.extractor,f.extractor_model,
                       f.prompt_version,f.extracted_at,f.created_at,
                       (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
-                      COALESCE(c.text,sc.text,'') AS evidence,d.title AS document_title,d.source_created_at,
+                      d.title AS document_title,d.source_created_at,
                       e.canonical_name AS subject,COALESCE(e.entity_type,f.resolved_entity_type) AS entity_type,
                       r.state AS review_state,r.reason,r.review_note,q.snoozed_until,q.last_presented_at,
                       COALESCE(q.presentation_count,0) AS presentation_count,
@@ -7603,14 +7712,22 @@ def review_inbox_projection(
                         WHERE current_fact.id<>f.id AND current_fact.fact_key=f.fact_key
                           AND current_fact.status='current' AND current_review.state='confirmed'
                       ) THEN 1 ELSE 0 END AS is_current_replacement
+                      ,CASE WHEN EXISTS (
+                        SELECT 1 FROM finance_transaction_candidates fc
+                        WHERE fc.fact_id=f.id AND fc.is_actual=1 AND fc.eligibility_state='pending'
+                      ) THEN 1 ELSE 0 END AS is_actual_transaction
                FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
                LEFT JOIN documents d ON d.id=f.document_id
-               LEFT JOIN chunks c ON c.id=f.chunk_id
-               LEFT JOIN chunks sc ON sc.id=f.source_chunk_id
                LEFT JOIN entities e ON e.id=f.subject_entity_id
                LEFT JOIN fact_review_queue_state q ON q.fact_id=f.id
                WHERE r.state IN ('pending','deferred')"""
-        )]
+        fact_params: list[object] = []
+        if requested_domain:
+            fact_sql += " AND f.category=?"
+            fact_params.append(requested_domain)
+        fact_sql += " ORDER BY f.created_at ASC,f.id ASC LIMIT ?"
+        fact_params.append(REVIEW_SCAN_LIMIT + 1)
+        rows = [dict(row) for row in connection.execute(fact_sql, fact_params)]
         projected: list[dict[str, object]] = []
         counts = {"urgent": 0, "normal": 0, "deferred": 0}
         bucket_rank = {"urgent": 0, "normal": 1, "deferred": 2}
@@ -7627,38 +7744,177 @@ def review_inbox_projection(
                 "category": row_domain,
                 "domain_label": _digest_domain_label(row_domain),
                 "bucket": row_bucket,
+                "item_kind": "fact", "item_key": f"fact:{int(row['id'])}",
                 "priority_reason": reason,
                 "sensitive": sensitive,
-                "summary": "機微情報の確認が必要です" if sensitive else str(row.get("summary") or "確認が必要な記憶"),
+                "summary": SENSITIVE_REVIEW_SUMMARY if sensitive else str(row.get("summary") or "確認が必要な記憶"),
                 "value_json": "{}" if sensitive else str(row.get("value_json") or "{}"),
-                "evidence": "" if sensitive else str(row.get("evidence") or "")[:1200],
+                "evidence": "",
                 "document_title": "非表示" if sensitive else str(row.get("document_title") or "原文"),
                 "_priority": priority,
                 "_sort_time": str(row.get("created_at") or row.get("source_created_at") or ""),
             }
             projected.append(item)
+        proposal_rows = [dict(row) for row in connection.execute(
+            """SELECT p.id,p.entry_id,p.facts_json,p.created_at,e.title AS entry_title,q.snoozed_until,q.is_deferred,
+                      COALESCE(q.presentation_count,0) AS presentation_count
+               FROM memory_proposals p JOIN entries e ON e.id=p.entry_id
+               LEFT JOIN memory_proposal_queue_state q ON q.proposal_id=p.id
+               WHERE p.status='pending' ORDER BY p.created_at ASC,p.id ASC LIMIT ?""",
+            (REVIEW_SCAN_LIMIT + 1,),
+        )]
+        for proposal_row in proposal_rows:
+            item = _proposal_projection(proposal_row)
+            if requested_domain and item["category"] != requested_domain:
+                continue
+            counts[str(item["bucket"])] += 1
+            projected.append(item)
         projected.sort(key=lambda item: (
             bucket_rank[str(item["bucket"])], int(item["_priority"]),
-            str(item["_sort_time"]), int(item["id"]),
+            str(item["_sort_time"]), str(item["item_kind"]), int(item["id"]),
         ))
         selected = projected if bucket == "all" else [item for item in projected if item["bucket"] == bucket]
-        page = selected[offset:offset + limit]
-        if mark_presented and page:
-            timestamp = now()
-            for item in page:
-                connection.execute(
-                    """INSERT INTO fact_review_queue_state(fact_id,last_presented_at,presentation_count,updated_at)
-                       VALUES(?,?,1,?) ON CONFLICT(fact_id) DO UPDATE SET
-                       last_presented_at=excluded.last_presented_at,
-                       presentation_count=fact_review_queue_state.presentation_count+1,
-                       updated_at=excluded.updated_at""",
-                    (item["id"], timestamp, timestamp),
-                )
+        keyed = [(
+            bucket_rank[str(item["bucket"])], int(item["_priority"]), str(item["_sort_time"]),
+            str(item["item_kind"]), int(item["id"]), item,
+        ) for item in selected]
+        if after_key is not None:
+            keyed = [entry for entry in keyed if entry[:5] > after_key]
+        page_entries = keyed[:limit]
+        page = [entry[5] for entry in page_entries]
         for item in page:
             item.pop("_priority", None)
             item.pop("_sort_time", None)
-        next_cursor = str(offset + limit) if offset + limit < len(selected) else None
-    return {"items": page, "counts": counts, "next_cursor": next_cursor, "bucket": bucket}
+        next_cursor = _review_cursor_encode(page_entries[-1][:5]) if len(keyed) > limit and page_entries else None
+    return {"items": page, "counts": counts, "next_cursor": next_cursor, "bucket": bucket,
+            "scan_limited": len(rows) > REVIEW_SCAN_LIMIT or len(proposal_rows) > REVIEW_SCAN_LIMIT}
+
+
+def review_inbox_detail(fact_id: int, include_sensitive: bool = False) -> dict[str, object]:
+    with db() as connection:
+        row = connection.execute(
+            """SELECT f.id,f.category,f.fact_type,f.summary,f.value_json,f.occurred_on,f.valid_from,f.valid_to,
+                      f.extractor,f.extractor_model,f.prompt_version,f.extracted_at,
+                      COALESCE(c.text,sc.text,'') AS evidence,d.title AS document_title,
+                      (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
+                      r.state AS review_state
+               FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+               LEFT JOIN documents d ON d.id=f.document_id
+               LEFT JOIN chunks c ON c.id=f.chunk_id LEFT JOIN chunks sc ON sc.id=f.source_chunk_id
+               WHERE f.id=? AND r.state IN ('pending','deferred')""", (fact_id,),
+        ).fetchone()
+    if not row:
+        raise LookupError("Review item not found")
+    item = dict(row)
+    domain = canonical_domain(str(item.get("category") or "other"))
+    sensitive = domain in {"finance", "relationship", "health"}
+    item.update({"item_kind": "fact", "category": domain, "domain_label": _digest_domain_label(domain), "sensitive": sensitive})
+    if sensitive and not include_sensitive:
+        item.update({"summary": SENSITIVE_REVIEW_SUMMARY, "value_json": "{}", "evidence": "", "document_title": "非表示"})
+    return item
+
+
+def review_proposal_detail(proposal_id: int, include_sensitive: bool = False) -> dict[str, object]:
+    with db() as connection:
+        row = connection.execute(
+            """SELECT p.id,p.facts_json,p.policy,p.created_at,e.title AS entry_title,e.body AS entry_body
+               FROM memory_proposals p JOIN entries e ON e.id=p.entry_id
+               WHERE p.id=? AND p.status='pending'""", (proposal_id,),
+        ).fetchone()
+    if not row:
+        raise LookupError("Review item not found")
+    projected = _proposal_projection(dict(row))
+    if projected["sensitive"] and not include_sensitive:
+        return projected
+    projected.update({"facts": json.loads(row["facts_json"] or "[]"), "source_preview": str(row["entry_body"] or "")[:1200], "policy": row["policy"]})
+    return projected
+
+
+def update_fact_review_state(fact_id: int, state: str, defer_for: str = "", note: str = "") -> dict[str, object]:
+    """Apply only valid review transitions; finite snoozes keep pending state."""
+    if state not in {"pending", "confirmed", "rejected", "deferred"}:
+        raise ValueError("Invalid review state")
+    if state == "pending" and defer_for not in {"", "one_day", "one_week"}:
+        raise ValueError("pending accepts only one_day or one_week snooze")
+    if state == "deferred" and defer_for != "indefinite":
+        raise ValueError("deferred requires indefinite")
+    if state in {"confirmed", "rejected"} and defer_for:
+        raise ValueError("confirmed and rejected do not accept defer_for")
+    with db() as connection:
+        current = connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()
+        if not current:
+            raise LookupError("Review item not found")
+        queue = connection.execute("SELECT snoozed_until FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone()
+        if state == "pending" and not defer_for and current["state"] != "deferred" and not queue:
+            raise ValueError("pending is only valid when resuming a deferred or snoozed item")
+        if state in {"confirmed", "rejected", "deferred"} and current["state"] not in {"pending", "deferred"}:
+            raise ValueError(f"Cannot transition {current['state']} to {state}")
+        stored_state = state
+        connection.execute(
+            "UPDATE fact_reviews SET state=?,reason=?,review_note=?,reviewed_at=? WHERE fact_id=?",
+            (stored_state, "ユーザー確認済み" if stored_state == "confirmed" else "ユーザー却下" if stored_state == "rejected" else "ユーザー保留",
+             str(note or "ユーザー操作")[:1000], now() if stored_state in {"confirmed", "rejected"} else None, fact_id),
+        )
+        if (state == "pending" and defer_for) or state == "deferred":
+            deadline = None
+            if defer_for == "one_day": deadline = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+            elif defer_for == "one_week": deadline = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+            connection.execute(
+                """INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at)
+                   VALUES(?,?,?) ON CONFLICT(fact_id) DO UPDATE SET
+                   snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at""", (fact_id, deadline, now()),
+            )
+        else:
+            connection.execute("DELETE FROM fact_review_queue_state WHERE fact_id=?", (fact_id,))
+        if stored_state == "confirmed":
+            sync_finance_transaction(connection, fact_id, confirmed=True)
+        elif stored_state == "rejected":
+            connection.execute(
+                "UPDATE finance_transactions SET eligibility_state='excluded',eligibility_reason='fact_rejected',validated_at=? WHERE fact_id=?",
+                (now(), fact_id),
+            )
+        # Snooze/defer is display control only. Re-running quality analysis at
+        # that point could change validation or eligibility, which would make
+        # a UI scheduling action alter the meaning of the Fact.
+        quality = apply_memory_quality_to_fact(connection, fact_id, source="manual_review") if stored_state in {"confirmed", "rejected"} else None
+    return {"message": "Reviewed", "state": stored_state, "defer_for": defer_for or None, "quality": quality}
+
+
+def mark_review_item_presented(item_kind: str, item_id: int) -> int:
+    """Increment one item only after the client confirms it entered the DOM."""
+    timestamp = now()
+    with db() as connection:
+        if item_kind == "fact":
+            exists = connection.execute(
+                "SELECT 1 FROM fact_reviews WHERE fact_id=? AND state IN ('pending','deferred')", (item_id,),
+            ).fetchone()
+            if not exists: raise LookupError("Review item not found")
+            connection.execute(
+                """INSERT INTO fact_review_queue_state(fact_id,last_presented_at,presentation_count,updated_at)
+                   VALUES(?,?,1,?) ON CONFLICT(fact_id) DO UPDATE SET
+                   last_presented_at=excluded.last_presented_at,
+                   presentation_count=fact_review_queue_state.presentation_count+1,
+                   updated_at=excluded.updated_at""", (item_id, timestamp, timestamp),
+            )
+            return int(connection.execute(
+                "SELECT presentation_count FROM fact_review_queue_state WHERE fact_id=?", (item_id,),
+            ).fetchone()[0])
+        if item_kind == "memory-proposal":
+            exists = connection.execute(
+                "SELECT 1 FROM memory_proposals WHERE id=? AND status='pending'", (item_id,),
+            ).fetchone()
+            if not exists: raise LookupError("Review item not found")
+            connection.execute(
+                """INSERT INTO memory_proposal_queue_state(proposal_id,last_presented_at,presentation_count,updated_at)
+                   VALUES(?,?,1,?) ON CONFLICT(proposal_id) DO UPDATE SET
+                   last_presented_at=excluded.last_presented_at,
+                   presentation_count=memory_proposal_queue_state.presentation_count+1,
+                   updated_at=excluded.updated_at""", (item_id, timestamp, timestamp),
+            )
+            return int(connection.execute(
+                "SELECT presentation_count FROM memory_proposal_queue_state WHERE proposal_id=?", (item_id,),
+            ).fetchone()[0])
+    raise ValueError("Invalid review item kind")
 
 
 def _action_is_snoozed(row: dict[str, object] | None) -> bool:
@@ -7714,8 +7970,7 @@ def action_center_projection() -> dict[str, object]:
         }))
 
     urgent = [item for item in inbox["items"] if item["bucket"] == "urgent"]
-    normal = [item for item in inbox["items"] if item["bucket"] == "normal"]
-    for priority, collection in ((4, urgent[:1]), (6, normal[:1])):
+    for priority, collection in ((4, urgent[:1]),):
         for item in collection:
             candidates.append((priority, str(item.get("source_created_at") or item.get("created_at") or ""), {
                 "key": f"fact:{int(item['id'])}:review", "kind": "fact_review", "id": int(item["id"]),
@@ -8278,7 +8533,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         return origin if origin in configured else None
 
-    def send_json(self, payload: object, status: int = 200) -> None:
+    def send_json(self, payload: object, status: int = 200, *, no_store: bool = False) -> None:
         request_id = self._request_id()
         if isinstance(payload, dict):
             payload = dict(payload)
@@ -8294,6 +8549,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("X-Request-ID", request_id)
+        if no_store:
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Pragma", "no-cache")
         allowed_origin = self.allowed_cors_origin()
         if allowed_origin:
             self.send_header("Access-Control-Allow-Origin", allowed_origin)
@@ -8475,47 +8733,43 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(rows)
         if path == "/api/action-center":
             return self.send_json(action_center_projection())
+        review_detail_match = re.fullmatch(r"/api/review-inbox/(\d+)/detail", path)
+        if review_detail_match:
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                detail = review_inbox_detail(
+                    int(review_detail_match.group(1)),
+                    str(query.get("include_sensitive", ["false"])[0]).lower() == "true",
+                )
+                return self.send_json(detail, no_store=True)
+            except LookupError as error:
+                return self.send_json({"error": str(error)}, 404, no_store=True)
+        proposal_detail_match = re.fullmatch(r"/api/review-inbox/proposals/(\d+)/detail", path)
+        if proposal_detail_match:
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                detail = review_proposal_detail(
+                    int(proposal_detail_match.group(1)),
+                    str(query.get("include_sensitive", ["false"])[0]).lower() == "true",
+                )
+                return self.send_json(detail, no_store=True)
+            except LookupError as error:
+                return self.send_json({"error": str(error)}, 404, no_store=True)
         if path == "/api/review-inbox":
             query = parse_qs(urlparse(self.path).query)
             try:
                 return self.send_json(review_inbox_projection(
                     bucket=str(query.get("bucket", ["urgent"])[0]),
                     domain=str(query.get("domain", [""])[0]),
-                    limit=int(query.get("limit", [20])[0]),
+                    limit=int(query.get("limit", [10])[0]),
                     cursor=query.get("cursor", [None])[0],
-                    mark_presented=True,
                 ))
             except (TypeError, ValueError) as error:
                 return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/facts/review":
-            with db() as connection:
-                rows = [dict(row) for row in connection.execute(
-                    """SELECT f.id, f.category, f.fact_type, f.occurred_on, f.value_json, f.summary, f.confidence,
-                              f.subject_scope, f.resolved_entity_type, f.retrieval_eligibility, f.validation_status,
-                              f.extractor,f.extractor_model,f.prompt_version,f.extracted_at,
-                              (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
-                              c.text AS evidence,
-                              d.title AS document_title, d.source_created_at, e.canonical_name AS subject,
-                              COALESCE(e.entity_type,f.resolved_entity_type) AS entity_type,
-                              r.state, r.reason, r.review_note,
-                              CASE WHEN EXISTS (
-                                SELECT 1 FROM facts other
-                                WHERE other.subject_entity_id=f.subject_entity_id AND other.fact_type=f.fact_type
-                                  AND COALESCE(other.occurred_on,'')=COALESCE(f.occurred_on,'')
-                                  AND other.value_json != f.value_json
-                              ) THEN '同じ対象・時期に異なる値があります。原文を確認してください。'
-                              ELSE r.reason END AS review_reason
-                       FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
-                       JOIN documents d ON d.id=f.document_id
-                       LEFT JOIN chunks c ON c.id=f.chunk_id
-                       LEFT JOIN entities e ON e.id=f.subject_entity_id
-                       WHERE r.state IN ('pending', 'deferred')
-                       ORDER BY
-                         (ABS(RANDOM()) / 9223372036854775808.0) * (0.15 + COALESCE(f.confidence, 0.5)),
-                         f.created_at DESC
-                       LIMIT 10"""
-                )]
-            return self.send_json(rows)
+            # Legacy route kept for compatibility, but it now uses the same
+            # deterministic and masked projection as Review Inbox.
+            return self.send_json(review_inbox_projection("all", limit=10)["items"])
         if path == "/api/facts/review-summary":
             with db() as connection:
                 counts = {row["state"]: row["count"] for row in connection.execute(
@@ -8931,6 +9185,45 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if not self._authorize(True):
             return
+        presented_match = re.fullmatch(r"/api/review-inbox/(fact|memory-proposal)/(\d+)/presented", path)
+        if presented_match:
+            item_kind, raw_id = presented_match.groups()
+            item_id = int(raw_id)
+            try:
+                count = mark_review_item_presented(item_kind, item_id)
+            except LookupError:
+                return self.send_json({"error": "Review item not found"}, 404)
+            return self.send_json({"item_kind": item_kind, "id": item_id, "presentation_count": int(count)})
+        proposal_snooze_match = re.fullmatch(r"/api/review-inbox/memory-proposal/(\d+)/snooze", path)
+        if proposal_snooze_match:
+            try:
+                proposal_id = int(proposal_snooze_match.group(1))
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                defer_for = str(payload.get("defer_for") or "").strip()
+                if defer_for not in {"resume", "one_day", "one_week", "indefinite"}:
+                    raise ValueError("Invalid proposal defer period")
+                deadline = None
+                if defer_for == "one_day":
+                    deadline = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+                elif defer_for == "one_week":
+                    deadline = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+                with db() as connection:
+                    exists = connection.execute(
+                        "SELECT 1 FROM memory_proposals WHERE id=? AND status='pending'", (proposal_id,),
+                    ).fetchone()
+                    if not exists:
+                        return self.send_json({"error": "Proposal not found"}, 404)
+                    connection.execute(
+                        """INSERT INTO memory_proposal_queue_state(proposal_id,snoozed_until,is_deferred,updated_at)
+                           VALUES(?,?,?,?) ON CONFLICT(proposal_id) DO UPDATE SET
+                           snoozed_until=excluded.snoozed_until,is_deferred=excluded.is_deferred,
+                           updated_at=excluded.updated_at""",
+                        (proposal_id, deadline, 1 if defer_for == "indefinite" else 0, now()),
+                    )
+                return self.send_json({"proposal_id": proposal_id, "defer_for": defer_for})
+            except (ValueError, json.JSONDecodeError) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/action-center/snooze":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -9820,48 +10113,11 @@ class Handler(BaseHTTPRequestHandler):
                 fact_id = int(path.split("/")[3])
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                state = str(payload["state"])
-                if state not in {"pending", "confirmed", "rejected", "deferred"}:
-                    raise ValueError("Invalid review state")
-                defer_for = str(payload.get("defer_for") or "indefinite")
-                if state == "deferred" and defer_for not in {"one_day", "one_week", "indefinite"}:
-                    raise ValueError("Invalid defer period")
-                note = str(payload.get("note", ""))[:1000]
-                with db() as connection:
-                    cursor = connection.execute(
-                        "UPDATE fact_reviews SET state=?,reason=?,review_note=?,reviewed_at=? WHERE fact_id=?",
-                        (state, "ユーザー確認済み" if state == "confirmed" else "ユーザー却下" if state == "rejected" else "ユーザー保留",
-                         note or "ユーザー操作", now() if state in {"confirmed", "rejected"} else None, fact_id),
-                    )
-                    if cursor.rowcount:
-                        if state == "deferred":
-                            deadline = None
-                            if defer_for == "one_day":
-                                deadline = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
-                            elif defer_for == "one_week":
-                                deadline = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-                            connection.execute(
-                                """INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at)
-                                   VALUES(?,?,?) ON CONFLICT(fact_id) DO UPDATE SET
-                                   snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at""",
-                                (fact_id, deadline, now()),
-                            )
-                        elif state == "pending":
-                            connection.execute("DELETE FROM fact_review_queue_state WHERE fact_id=?", (fact_id,))
-                        else:
-                            connection.execute("DELETE FROM fact_review_queue_state WHERE fact_id=?", (fact_id,))
-                    if cursor.rowcount and state in {"confirmed", "rejected"}:
-                        if state == "confirmed":
-                            sync_finance_transaction(connection, fact_id, confirmed=True)
-                        else:
-                            connection.execute(
-                                "UPDATE finance_transactions SET eligibility_state='excluded',eligibility_reason='fact_rejected',validated_at=? WHERE fact_id=?",
-                                (now(), fact_id),
-                            )
-                    if not cursor.rowcount:
-                        return self.send_json({"error": "Not found"}, 404)
-                    quality = apply_memory_quality_to_fact(connection, fact_id, source="manual_review")
-                return self.send_json({"message": "Reviewed", "quality": quality})
+                return self.send_json(update_fact_review_state(
+                    fact_id, str(payload["state"]), str(payload.get("defer_for") or "").strip(), str(payload.get("note") or ""),
+                ))
+            except LookupError as error:
+                return self.send_json({"error": str(error)}, 404)
             except (KeyError, ValueError, json.JSONDecodeError) as error:
                 return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path.startswith("/api/facts/") and path.endswith("/category"):
@@ -10080,7 +10336,7 @@ if __name__ == "__main__":
         )
         raise SystemExit(2)
     port = APP_PORT
-    migration_backup = backup_before_migration("014_action_center_review_inbox")
+    migration_backup = backup_before_migration("015_action_center_review_inbox_stabilization")
     initialize()
     acquired, existing = acquire_runtime_lease(port)
     if not acquired:

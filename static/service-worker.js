@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-v3-phase-b-ux1-action-center-1";
+const CACHE_NAME = "personal-os-v3-phase-b-ux1-stabilization-3";
 const APP_SHELL = ["/", "/styles.css", "/api-client.js", "/app.js", "/visualization.js", "/daily-ux.js", "/action-center.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", event => {

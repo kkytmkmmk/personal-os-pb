@@ -79,6 +79,10 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
         urgent = self.fact(summary="矛盾", validation="conflict")
         self.assertEqual(app.action_center_projection()["top_action"]["id"], urgent)
 
+    def test_normal_review_does_not_occupy_today(self):
+        self.fact(summary="通常確認")
+        self.assertNotEqual(app.action_center_projection()["top_action"]["kind"], "fact_review")
+
     def test_action_center_returns_exactly_one_top_action(self):
         self.fact(); self.fact(summary="二件目")
         result = app.action_center_projection()
@@ -99,7 +103,7 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_conflict_is_first_urgent_kind(self):
-        important = self.fact(fact_type="schedule", summary="予定")
+        important = self.fact(fact_type="schedule", summary="予定", value={"date": (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()})
         conflict = self.fact(summary="矛盾", eligibility="conflict")
         ids = [row["id"] for row in app.review_inbox_projection("urgent")["items"]]
         self.assertEqual(ids[:2], [conflict, important])
@@ -108,7 +112,7 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
         key = "housing.rent.current"
         self.fact(category="housing", fact_type="status", summary="現在", state="confirmed", fact_key=key, status="current")
         replacement = self.fact(category="housing", fact_type="status", summary="新候補", fact_key=key)
-        important = self.fact(category="housing", fact_type="schedule", summary="更新予定")
+        important = self.fact(category="housing", fact_type="schedule", summary="更新予定", value={"date": (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()})
         ids = [row["id"] for row in app.review_inbox_projection("urgent")["items"]]
         self.assertEqual(ids[:2], [replacement, important])
 
@@ -135,12 +139,12 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
             connection.execute("INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at) VALUES(?,?,?)", (fact_id, future, app.now()))
         self.assertNotEqual(app.action_center_projection()["top_action"].get("id"), fact_id)
 
-    def test_expired_snooze_reappears(self):
+    def test_legacy_deferred_with_expired_snooze_stays_deferred(self):
         fact_id = self.fact(validation="conflict", state="deferred")
         past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         with app.db() as connection:
             connection.execute("INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at) VALUES(?,?,?)", (fact_id, past, app.now()))
-        self.assertEqual(app.review_inbox_projection("urgent")["items"][0]["id"], fact_id)
+        self.assertEqual(app.review_inbox_projection("deferred")["items"][0]["id"], fact_id)
 
     def test_confirmed_disappears(self):
         self.fact(state="confirmed")
@@ -169,9 +173,116 @@ class ActionCenterReviewInboxTests(unittest.TestCase):
         self.assertEqual(app.review_inbox_projection("urgent")["counts"], {"urgent": 1, "normal": 1, "deferred": 1})
 
     def test_sensitive_review_masks_summary_value_and_evidence(self):
-        self.fact(category="finance", summary="秘密の金額", value={"amount": 999})
+        self.fact(category="finance", summary="秘密の金額", value={"amount": 999}, validation="conflict")
         item = app.review_inbox_projection("urgent")["items"][0]
         self.assertEqual((item["summary"], item["value_json"], item["evidence"]), ("機微情報の確認が必要です", "{}", ""))
+
+    def test_sensitive_detail_requires_explicit_include(self):
+        fact_id = self.fact(category="finance", summary="秘密の金額", value={"amount": 999})
+        self.assertEqual(app.review_inbox_detail(fact_id)["summary"], "機微情報の確認が必要です")
+        detail = app.review_inbox_detail(fact_id, include_sensitive=True)
+        self.assertEqual(detail["summary"], "秘密の金額")
+        self.assertIn("本人の明示Evidence", detail["evidence"])
+
+    def test_masked_summary_cannot_correct_sensitive_fact(self):
+        fact_id = self.fact(category="finance", summary="秘密の金額", value={"amount": 999})
+        with self.assertRaises(ValueError):
+            app.correct_fact(fact_id, {"summary": "機微情報の確認が必要です", "value": {}})
+
+    def test_one_day_snooze_keeps_pending(self):
+        fact_id = self.fact(validation="conflict")
+        result = app.update_fact_review_state(fact_id, "pending", "one_day")
+        self.assertEqual(result["state"], "pending")
+        with app.db() as connection:
+            self.assertEqual(connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()[0], "pending")
+            self.assertIsNotNone(connection.execute("SELECT snoozed_until FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone()[0])
+
+    def test_one_week_snooze_keeps_pending(self):
+        fact_id = self.fact(validation="conflict")
+        app.update_fact_review_state(fact_id, "pending", "one_week")
+        with app.db() as connection:
+            self.assertEqual(connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()[0], "pending")
+
+    def test_expired_pending_snooze_returns_to_original_bucket(self):
+        fact_id = self.fact(validation="conflict")
+        app.update_fact_review_state(fact_id, "pending", "one_day")
+        with app.db() as connection:
+            connection.execute("UPDATE fact_review_queue_state SET snoozed_until=? WHERE fact_id=?", ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), fact_id))
+        self.assertEqual(app.review_inbox_projection("urgent")["items"][0]["id"], fact_id)
+
+    def test_indefinite_defer_is_the_only_deferred_transition(self):
+        fact_id = self.fact()
+        result = app.update_fact_review_state(fact_id, "deferred", "indefinite")
+        self.assertEqual(result["state"], "deferred")
+        with app.db() as connection:
+            self.assertIsNone(connection.execute("SELECT snoozed_until FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone()[0])
+
+    def test_invalid_review_state_period_pair_is_rejected(self):
+        fact_id = self.fact()
+        with self.assertRaises(ValueError):
+            app.update_fact_review_state(fact_id, "confirmed", "one_day")
+        with self.assertRaises(ValueError):
+            app.update_fact_review_state(fact_id, "deferred", "one_day")
+
+    def test_amount_alone_does_not_make_review_urgent(self):
+        fact_id = self.fact(category="finance", summary="試算", value={"amount": 999})
+        self.assertEqual(app.review_inbox_projection("normal")["items"][0]["id"], fact_id)
+
+    def test_inactive_decision_reference_does_not_make_review_urgent(self):
+        fact_id = self.fact()
+        decision_id = self.decision("result", "完了", result="完了", evaluation="良かった")
+        with app.db() as connection:
+            connection.execute("UPDATE decisions SET related_fact_ids_json=? WHERE id=?", (json.dumps([fact_id]), decision_id))
+        self.assertEqual(app.review_inbox_projection("normal")["items"][0]["id"], fact_id)
+
+    def test_memory_proposal_is_in_normal_inbox(self):
+        with app.db() as connection:
+            entry_id = connection.execute(
+                "INSERT INTO entries(kind,title,body,source,tags,status,created_at,updated_at) VALUES('memo','候補','本人の候補','manual','[]','inbox',?,?)",
+                (self.stamp, self.stamp),
+            ).lastrowid
+            proposal_id = connection.execute(
+                "INSERT INTO memory_proposals(entry_id,facts_json,policy,status,created_at) VALUES(?,?,?,'pending',?)",
+                (entry_id, json.dumps([{"category": "travel", "summary": "温泉が好き"}], ensure_ascii=False), "confirm", self.stamp),
+            ).lastrowid
+        item = app.review_inbox_projection("normal")["items"][0]
+        self.assertEqual((item["item_kind"], item["id"]), ("memory_proposal", proposal_id))
+
+    def test_projection_does_not_mark_items_presented(self):
+        fact_id = self.fact()
+        app.review_inbox_projection("normal")
+        with app.db() as connection:
+            self.assertIsNone(connection.execute("SELECT presentation_count FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone())
+
+    def test_presented_updates_only_the_requested_item(self):
+        first = self.fact(); second = self.fact(summary="二件目")
+        self.assertEqual(app.mark_review_item_presented("fact", first), 1)
+        with app.db() as connection:
+            self.assertIsNone(connection.execute("SELECT presentation_count FROM fact_review_queue_state WHERE fact_id=?", (second,)).fetchone())
+
+    def test_confirmed_removes_snooze_metadata(self):
+        fact_id = self.fact()
+        app.update_fact_review_state(fact_id, "pending", "one_day")
+        app.update_fact_review_state(fact_id, "confirmed")
+        with app.db() as connection:
+            self.assertIsNone(connection.execute("SELECT 1 FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone())
+
+    def test_active_decision_reference_is_urgent(self):
+        fact_id = self.fact()
+        decision_id = self.decision("decided", "進行中")
+        with app.db() as connection:
+            connection.execute("UPDATE decisions SET related_fact_ids_json=? WHERE id=?", (json.dumps([fact_id]), decision_id))
+        self.assertEqual(app.review_inbox_projection("urgent")["items"][0]["id"], fact_id)
+
+    def test_schedule_beyond_fourteen_days_is_normal(self):
+        fact_id = self.fact(fact_type="schedule", value={"date": (datetime.now(timezone.utc) + timedelta(days=20)).date().isoformat()})
+        self.assertEqual(app.review_inbox_projection("normal")["items"][0]["id"], fact_id)
+
+    def test_large_backlog_first_page_is_bounded(self):
+        for index in range(55): self.fact(summary=f"候補{index}")
+        result = app.review_inbox_projection("normal")
+        self.assertEqual(len(result["items"]), 10)
+        self.assertIsNotNone(result["next_cursor"])
 
     def test_migration_is_idempotent(self):
         app.migrate_action_center_review_inbox(); app.migrate_action_center_review_inbox()
