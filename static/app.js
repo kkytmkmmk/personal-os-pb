@@ -80,7 +80,7 @@
   }
 
   const pageAliases = { memory: 'home', admin: 'settings' };
-  const pageNames = { today: '今日', chat: '相談', home: '記憶', money: '資産', travel: '旅行', housing: '住居', people: '人間関係', decisions: '判断', explore: '探索', settings: '管理', import: '取込', visualize: '記憶状況', verify: '記憶品質', review: 'レビュー', checkin: 'チェックイン', questions: '質問セット' };
+  const pageNames = { today: '今日', chat: '相談', home: '記憶', money: '資産', travel: '旅行', housing: '住居', people: '人間関係', decisions: '判断', explore: '探索', settings: '管理', import: '取込', visualize: '記憶状況', verify: '確認Inbox', review: '週次レビュー', checkin: 'チェックイン', questions: '質問セット' };
 
   function setActiveTab(tab) {
     if (!tab) return;

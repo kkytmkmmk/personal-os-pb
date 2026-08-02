@@ -27,7 +27,7 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path(sys.executable)
 BASE_URL = "http://127.0.0.1:8877"
-RESULTS = ROOT / "test-results" / "screenshots"
+RESULTS = Path(os.environ.get("PERSONAL_OS_E2E_RESULTS_DIR", str(ROOT / "test-results" / "screenshots"))).resolve()
 PUBLIC_DIR = ROOT / "docs" / "screenshots" / "ux-phase5"
 EDGE_PATHS = (
     Path(os.environ.get("PERSONAL_OS_E2E_BROWSER", "")),
@@ -136,7 +136,7 @@ def assert_layout(page: Any, *, mobile: bool = False) -> None:
 
 def route(page: Any, name: str) -> None:
     if page.url == "about:blank":
-        page.goto(f"{BASE_URL}/#today", wait_until="load")
+        page.goto(f"{BASE_URL}/#today", wait_until="domcontentloaded")
     visible_navigation = page.locator(f"[data-tab='{name}']:visible")
     if visible_navigation.count() > 0:
         visible_navigation.first.click()
@@ -147,6 +147,13 @@ def route(page: Any, name: str) -> None:
     if visible_tabs != [name]:
         raise E2EFailure(f"route {name} left unexpected visible tabs: {visible_tabs}")
     page.wait_for_timeout(180)
+
+
+def reload_app(page: Any) -> None:
+    """Reload the real document without depending on a SW-delayed load event."""
+    page.reload(wait_until="commit", timeout=10000)
+    page.locator("#app-main").wait_for(state="attached", timeout=15000)
+    page.wait_for_function("() => typeof window.personalOsNavigate === 'function'", timeout=15000)
 
 
 def wait_domain(page: Any, tab: str) -> None:
@@ -194,7 +201,7 @@ def record_success(page: Any) -> None:
     page.wait_for_function("""() => document.querySelector('#record-notice')?.textContent.includes('保存しました')""", timeout=5000)
     if page.locator("#record-text").input_value() or page.evaluate("() => Boolean(sessionStorage.getItem('personal-os-draft-memo'))"):
         raise E2EFailure("successful recording did not clear its draft")
-    page.reload(wait_until="load"); route(page, "home")
+    reload_app(page); route(page, "home")
     persisted = page.evaluate("""async marker => (await (await fetch('/api/entries?q=' + encodeURIComponent(marker))).json()).some(entry => entry.body === marker)""", marker)
     if not persisted:
         raise E2EFailure("recorded synthetic memo did not persist after reload")
@@ -209,7 +216,7 @@ def record_timeout(browser: Any, console_errors: list[str]) -> None:
     """)
     page = context.new_page()
     page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
-    page.on("pageerror", lambda error: console_errors.append(f"pageerror: {error}"))
+    page.on("pageerror", lambda error: console_errors.append(f"pageerror: {getattr(error, 'stack', None) or error}"))
     marker = "Synthetic timeout memo"
 
     # Use the same AbortError contract as api-client.js, but keep it inside a
@@ -264,7 +271,7 @@ def save_result_and_evaluation(page: Any) -> None:
     if not saved.value.ok:
         raise E2EFailure(f"decision result did not save: {saved.value.status}")
     page.locator("#decision-outcome-sheet").wait_for(state="hidden")
-    page.reload(wait_until="load"); route(page, "decisions"); wait_decisions(page)
+    reload_app(page); route(page, "decisions"); wait_decisions(page)
     if page.locator("#decisions-content").inner_text().find("Synthetic persisted result") < 0:
         raise E2EFailure("decision result did not persist after reload")
     evaluation_button = page.locator("[data-decision-outcome][data-outcome-mode='evaluate']").first
@@ -277,7 +284,7 @@ def save_result_and_evaluation(page: Any) -> None:
     if not evaluated.value.ok:
         raise E2EFailure(f"later evaluation did not save: {evaluated.value.status}")
     page.locator("#decision-outcome-sheet").wait_for(state="hidden")
-    page.reload(wait_until="load"); route(page, "decisions"); wait_decisions(page)
+    reload_app(page); route(page, "decisions"); wait_decisions(page)
     if page.locator("#decisions-content").inner_text().find("Synthetic persisted evaluation") < 0:
         raise E2EFailure("later evaluation did not persist after reload")
 
@@ -347,8 +354,6 @@ def verify_daily_digest(page: Any, directory: Path, manifest: list[dict[str, Any
     route(page, "today")
     page.locator("#today-digest").wait_for(state="visible", timeout=5000)
     page.locator("#today-digest .digest-headline").wait_for(state="visible", timeout=5000)
-    if page.locator("#today-digest [data-digest-decision]").count() == 0:
-        raise E2EFailure("synthetic daily digest did not render an actionable decision")
     screenshot(page, directory, manifest, f"{prefix}-today-digest", "#today", "daily-digest", viewport)
     if mobile:
         prompt = page.locator("#today-digest [data-digest-prompt]").first
@@ -363,29 +368,87 @@ def verify_daily_digest(page: Any, directory: Path, manifest: list[dict[str, Any
         if page.locator("#chat-answer").inner_text().strip():
             raise E2EFailure("daily digest consultation prompt was sent automatically")
     else:
-        page.locator("#today-digest [data-digest-decision]").first.click()
-        # A result/evaluation action now opens the decision replay directly;
-        # other lifecycle actions still lead to the decision list.
-        try:
-            page.locator("#decision-replay-sheet").wait_for(state="visible", timeout=1200)
-            page.keyboard.press("Escape")
-        except Exception:
-            page.locator("#decisions").wait_for(state="visible", timeout=4000)
+        page.locator("#today-digest [data-digest-timeline]").click()
+        page.locator("#explore").wait_for(state="visible", timeout=4000)
 
 
 def verify_empty_daily_digest(page: Any, database: Path, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int]) -> None:
     """Use only the current synthetic SQLite database to exercise the empty state."""
     with sqlite3.connect(database) as connection:
         connection.execute("UPDATE facts SET status='excluded'")
+        connection.execute("UPDATE fact_reviews SET state='rejected'")
         connection.execute("DELETE FROM memory_changes")
         connection.execute("DELETE FROM decisions")
+    page.evaluate("() => sessionStorage.clear()")
     route(page, "today")
-    page.locator("#today-digest .empty-state").wait_for(state="visible", timeout=5000)
-    if page.locator("#today-digest").inner_text().find("まだ今日のダイジェストを作れる記録がありません") < 0:
-        raise E2EFailure("daily digest empty state did not explain the next step")
+    page.evaluate("() => window.refreshActionCenter?.()")
+    page.wait_for_function("() => document.querySelector('#today-daily-actions')?.textContent.includes('最初の記録を残す')", timeout=5000)
     screenshot(page, directory, manifest, f"{prefix}-today-digest-empty", "#today", "daily-digest-empty", viewport)
-    page.locator("#today-digest [data-digest-record]").click()
+    page.locator("#today-daily-actions [data-action-primary]").click()
     page.locator("#home").wait_for(state="visible")
+
+
+def verify_action_center_review_inbox(page: Any, directory: Path, manifest: list[dict[str, Any]],
+                                      prefix: str, viewport: tuple[int, int], *, mobile: bool) -> None:
+    """Exercise one-action Today and the real deterministic Review Inbox."""
+    route(page, "today")
+    page.locator("#today-daily-actions [data-action-primary]").wait_for(state="visible", timeout=5000)
+    if page.locator("#today-daily-actions [data-action-primary]").count() != 1:
+        raise E2EFailure("Today did not render exactly one primary next action")
+    if not page.locator("#today-daily-actions .action-reason").inner_text().strip():
+        raise E2EFailure("Today action has no reason")
+    if page.locator("#today-daily-actions [data-quick-route]").count() != 3:
+        raise E2EFailure("Today quick actions are not bounded to three")
+    if prefix in {"desktop-1280", "mobile-390"}:
+        screenshot(page, directory, manifest, f"{prefix}-action-center", "#today", "action-center", viewport)
+
+    # A client-only draft outranks every server action and routes back to its
+    # form without being sent automatically.
+    draft_value = page.evaluate("async () => { sessionStorage.setItem('personal-os-draft-memo','Synthetic unfinished memo'); await window.refreshActionCenter?.(); return sessionStorage.getItem('personal-os-draft-memo'); }")
+    if draft_value != "Synthetic unfinished memo":
+        raise E2EFailure("client draft was not retained before Action Center refresh")
+    page.wait_for_timeout(120)
+    draft_state = page.evaluate("() => ({ text: document.querySelector('#today-daily-actions')?.textContent || '', keys: Object.keys(sessionStorage) })")
+    if "書きかけの記録" not in draft_state["text"]:
+        raise E2EFailure(f"client draft did not override the server action: {draft_state}")
+    page.locator("#today-daily-actions [data-action-primary]").click()
+    page.locator("#home").wait_for(state="visible")
+    page.evaluate("() => { sessionStorage.removeItem('personal-os-draft-memo'); }")
+
+    route(page, "verify")
+    page.locator("#review-inbox-focus [data-review-id]").wait_for(state="visible", timeout=5000)
+    first_id = page.locator("#review-inbox-focus [data-review-id]").get_attribute("data-review-id")
+    if page.locator("#review-inbox-focus .review-domain").count() != 1:
+        raise E2EFailure("Review Inbox did not render one focus card")
+    if prefix in {"desktop-1280", "mobile-390"}:
+        screenshot(page, directory, manifest, f"{prefix}-review-inbox", "#verify", "review-inbox", viewport)
+    if mobile:
+        page.locator("#review-inbox-focus [data-review-defer]").click()
+        page.locator("#review-inbox-focus [data-review-period='one_day']").wait_for(state="visible")
+        page.locator("#review-inbox-focus [data-review-period='indefinite']").scroll_into_view_if_needed()
+        page.wait_for_timeout(100)
+        if prefix == "mobile-390":
+            screenshot(page, directory, manifest, f"{prefix}-review-snooze", "#verify", "review-snooze-options", viewport)
+        with page.expect_response(lambda response: f"/api/facts/{first_id}/review" in response.url and response.request.method == "PATCH", timeout=8000) as deferred:
+            page.locator("#review-inbox-focus [data-review-period='one_day']").click()
+        if not deferred.value.ok:
+            raise E2EFailure(f"Review snooze failed: {deferred.value.status}")
+        page.wait_for_function("previous => document.querySelector('#review-inbox-focus [data-review-id]')?.dataset.reviewId !== previous", arg=first_id, timeout=5000)
+        reload_app(page); route(page, "verify")
+        page.locator("[data-review-bucket='deferred']").click()
+        page.wait_for_function("() => document.querySelector('[data-review-bucket=\"deferred\"]')?.classList.contains('active')", timeout=5000)
+        page.locator("#review-inbox-list-toggle").click()
+        page.wait_for_function("expected => [...document.querySelectorAll('#review-inbox-focus [data-review-id],#review-inbox-list [data-review-id]')].some(node => node.dataset.reviewId === expected)", arg=first_id, timeout=5000)
+    else:
+        page.locator("#review-inbox-list-toggle").click()
+        if prefix == "desktop-1280":
+            screenshot(page, directory, manifest, f"{prefix}-review-focus", "#verify", "review-focus", viewport)
+        with page.expect_response(lambda response: "/api/facts/" in response.url and response.url.endswith("/review") and response.request.method == "PATCH", timeout=8000) as reviewed:
+            page.locator("#review-inbox-focus [data-review-state='confirmed']").click()
+        if not reviewed.value.ok:
+            raise E2EFailure(f"Review confirmation failed: {reviewed.value.status}")
+        page.wait_for_function("previous => document.querySelector('#review-inbox-focus [data-review-id]')?.dataset.reviewId !== previous", arg=first_id, timeout=5000)
+    assert_layout(page, mobile=mobile)
 
 
 def verify_timeline(page: Any, directory: Path, manifest: list[dict[str, Any]], prefix: str, viewport: tuple[int, int], *, mobile: bool) -> None:
@@ -525,6 +588,7 @@ def verify_empty_timeline(page: Any, database: Path, directory: Path, manifest: 
 def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "desktop-1280" if viewport[0] == 1280 else "desktop-1440"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
+    verify_action_center_review_inbox(page, directory, manifest, prefix, viewport, mobile=False)
     verify_daily_digest(page, directory, manifest, prefix, viewport, mobile=False)
     route(page, "home"); screenshot(page, directory, manifest, f"{prefix}-memory", "#memory", "default", viewport)
     if verify_persistence:
@@ -585,6 +649,7 @@ def desktop_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], 
 def mobile_journey(page: Any, directory: Path, manifest: list[dict[str, Any]], viewport: tuple[int, int], *, verify_persistence: bool) -> None:
     prefix = "mobile-390" if viewport[0] == 390 else "mobile-375"
     route(page, "today"); screenshot(page, directory, manifest, f"{prefix}-today", "#today", "default", viewport)
+    verify_action_center_review_inbox(page, directory, manifest, prefix, viewport, mobile=True)
     verify_daily_digest(page, directory, manifest, prefix, viewport, mobile=True)
     route(page, "today")
     screenshot(page, directory, manifest, f"{prefix}-bottom-nav", "#today", "bottom-navigation", viewport)
@@ -650,11 +715,13 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
     # viewports plus one representative of the secondary sizes.
     public_names = {
         "desktop-1280-today.png", "desktop-1280-memory.png", "desktop-1280-chat-loading.png",
+        "desktop-1280-action-center.png", "desktop-1280-review-inbox.png", "desktop-1280-review-focus.png",
         "desktop-1280-today-digest.png",
         "desktop-1280-chat-result.png", "desktop-1280-decisions.png", "desktop-1280-decision-result-sheet.png",
         "desktop-1280-decision-replay.png", "desktop-1280-decision-replay-evidence.png", "desktop-1280-ux-feedback.png", "desktop-1280-production-readiness.png",
         "desktop-1280-money.png", "desktop-1280-explore-space.png", "desktop-1280-benchmark.png", "desktop-1280-timeline.png", "desktop-1280-timeline-detail.png",
         "mobile-390-today.png", "mobile-390-memory.png", "mobile-390-memory-image.png",
+        "mobile-390-action-center.png", "mobile-390-review-inbox.png", "mobile-390-review-snooze.png",
         "mobile-390-today-digest.png",
         "mobile-390-chat-result.png", "mobile-390-decisions.png", "mobile-390-decision-result-sheet.png",
         "mobile-390-decision-replay.png", "mobile-390-decision-replay-missing-stage.png",
@@ -669,9 +736,14 @@ def promote_screenshots(directory: Path, manifest: list[dict[str, Any]]) -> None
     missing = public_names - set(by_name)
     if missing:
         raise E2EFailure("Missing required public review screenshots: " + ", ".join(sorted(missing)))
-    if PUBLIC_DIR.exists():
-        shutil.rmtree(PUBLIC_DIR)
-    PUBLIC_DIR.mkdir(parents=True)
+    PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+    # OneDrive may expose this allowlisted directory as a protected reparse
+    # point. Keep the directory itself and replace only its generated files.
+    for old_file in PUBLIC_DIR.glob("*.png"):
+        old_file.unlink()
+    old_manifest = PUBLIC_DIR / "manifest.json"
+    if old_manifest.is_file():
+        old_manifest.unlink()
     for item in public_manifest:
         shutil.copy2(directory / item["file"], PUBLIC_DIR / item["file"])
     payload = {"version": "1", "generated_at": datetime.now(UTC).isoformat(), "environment": "verification", "data_type": "synthetic", "screenshots": public_manifest}
@@ -727,8 +799,16 @@ def main() -> int:
     manifest: list[dict[str, Any]] = json.loads(work_manifest.read_text(encoding="utf-8")) if work_manifest.is_file() else []
     console_errors: list[str] = []
     try:
-        subprocess.run([str(PYTHON), str(ROOT / "tools" / "seed_ux_demo.py"), "--db", str(database)], cwd=ROOT, env=environment, check=True)
-        process = subprocess.Popen([str(PYTHON), "app.py"], cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        subprocess.run([str(PYTHON), str(ROOT / "tools" / "seed_ux_demo.py"), "--db", str(database), "--profile", "review-backlog"], cwd=ROOT, env=environment, check=True)
+        environment["PERSONAL_OS_RUN_STARTUP_MAINTENANCE"] = "false"
+        environment["PERSONAL_OS_QUEUE_ANALYSIS_ON_START"] = "false"
+        # Do not leave the verbose request log in an unread PIPE.  On Windows
+        # that pipe eventually fills during a long browser suite and blocks
+        # the server from serving deferred JS on reload.
+        process = subprocess.Popen(
+            [str(PYTHON), "app.py"], cwd=ROOT, env=environment,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+        )
         wait_for_server(process)
         with sync_playwright() as playwright:
             executable, browser_kind = browser_choice()
@@ -750,7 +830,7 @@ def main() -> int:
                 context = browser.new_context(viewport={"width": first[0], "height": first[1]}, device_scale_factor=1, is_mobile=mobile, has_touch=mobile)
                 page = context.new_page()
                 page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
-                page.on("pageerror", lambda error: console_errors.append(f"pageerror: {error}"))
+                page.on("pageerror", lambda error: console_errors.append(f"pageerror: {getattr(error, 'stack', None) or error}"))
                 for viewport in viewports:
                     page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
                     if mobile: mobile_journey(page, run_dir, manifest, viewport, verify_persistence=viewport == (390, 844))

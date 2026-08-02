@@ -1,0 +1,206 @@
+import json
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import app
+
+
+class ActionCenterReviewInboxTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.previous = (app.DB_PATH, app.BACKUP_DIR, app.ATTACHMENT_DIR, app.ANALYSIS_PREFILTER_SCOPE)
+        root = Path(self.temp.name)
+        app.DB_PATH = root / "ux-synthetic.db"
+        app.BACKUP_DIR = root / "backups"
+        app.ATTACHMENT_DIR = root / "attachments"
+        app.ANALYSIS_PREFILTER_SCOPE = None
+        app.initialize()
+        self.stamp = "2026-01-01T00:00:00+00:00"
+        with app.db() as connection:
+            self.document_id = connection.execute(
+                "INSERT INTO documents(title,source,source_created_at,ingested_at,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                ("合成原文", "manual", self.stamp, self.stamp, self.stamp, self.stamp),
+            ).lastrowid
+            self.chunk_id = connection.execute(
+                "INSERT INTO chunks(document_id,ordinal,text,text_hash,created_at) VALUES(?,?,?,?,?)",
+                (self.document_id, 0, "合成された本人の明示Evidence", "synthetic", self.stamp),
+            ).lastrowid
+
+    def tearDown(self):
+        app.DB_PATH, app.BACKUP_DIR, app.ATTACHMENT_DIR, app.ANALYSIS_PREFILTER_SCOPE = self.previous
+        self.temp.cleanup()
+
+    def fact(self, *, category="life", fact_type="preference", summary="静かな場所が好き", state="pending",
+             eligibility="pending", validation="pending", fact_key=None, created=None, value=None, status="unknown"):
+        created = created or self.stamp
+        with app.db() as connection:
+            fact_id = connection.execute(
+                """INSERT INTO facts(document_id,chunk_id,source_chunk_id,category,fact_type,fact_key,value_json,summary,
+                          confidence,truth_confidence,extractor,extractor_model,prompt_version,created_at,
+                          retrieval_eligibility,validation_status,status,personal_relevance)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (self.document_id, self.chunk_id, self.chunk_id, category, fact_type,
+                 fact_key or f"{category}.{fact_type}.{summary}", json.dumps(value or {}, ensure_ascii=False), summary,
+                 .6, .6, "synthetic", "none", "ux1-test", created, eligibility, validation, status, "personal"),
+            ).lastrowid
+            connection.execute(
+                "INSERT INTO fact_reviews(fact_id,state,reason,created_at) VALUES(?,?,?,?)",
+                (fact_id, state, "要確認", created),
+            )
+        return int(fact_id)
+
+    def decision(self, state, title, *, result="", evaluation="", created=None):
+        created = created or self.stamp
+        with app.db() as connection:
+            return int(connection.execute(
+                """INSERT INTO decisions(title,context,options_json,decision,rationale,status,created_at,updated_at,
+                          domain,decision_state,result,later_evaluation)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (title, "", "[]", "", "", "decided", created, created, "travel", state, result, evaluation),
+            ).lastrowid)
+
+    def test_empty_action_center_starts_recording(self):
+        self.assertEqual(app.action_center_projection()["top_action"]["kind"], "record")
+
+    def test_result_waiting_precedes_evaluation(self):
+        self.decision("result", "評価待ち", result="完了")
+        self.decision("executed", "結果待ち")
+        self.assertEqual(app.action_center_projection()["top_action"]["title"], "結果待ち")
+
+    def test_evaluation_precedes_urgent_review(self):
+        self.decision("result", "評価待ち", result="完了")
+        self.fact(eligibility="conflict")
+        self.assertEqual(app.action_center_projection()["top_action"]["kind"], "decision_evaluation")
+
+    def test_urgent_review_precedes_normal_review(self):
+        self.fact(summary="通常")
+        urgent = self.fact(summary="矛盾", validation="conflict")
+        self.assertEqual(app.action_center_projection()["top_action"]["id"], urgent)
+
+    def test_action_center_returns_exactly_one_top_action(self):
+        self.fact(); self.fact(summary="二件目")
+        result = app.action_center_projection()
+        self.assertIsInstance(result["top_action"], dict)
+        self.assertNotIn("actions", result)
+
+    def test_top_action_has_reason(self):
+        self.assertTrue(app.action_center_projection()["top_action"]["reason"])
+
+    def test_sensitive_top_action_is_masked(self):
+        self.fact(category="relationship", summary="秘密の人物名", validation="conflict")
+        self.assertNotIn("秘密", app.action_center_projection()["top_action"]["title"])
+
+    def test_review_order_is_deterministic(self):
+        self.fact(summary="A"); self.fact(summary="B")
+        first = [row["id"] for row in app.review_inbox_projection("normal")["items"]]
+        second = [row["id"] for row in app.review_inbox_projection("normal")["items"]]
+        self.assertEqual(first, second)
+
+    def test_conflict_is_first_urgent_kind(self):
+        important = self.fact(fact_type="schedule", summary="予定")
+        conflict = self.fact(summary="矛盾", eligibility="conflict")
+        ids = [row["id"] for row in app.review_inbox_projection("urgent")["items"]]
+        self.assertEqual(ids[:2], [conflict, important])
+
+    def test_current_replacement_precedes_important(self):
+        key = "housing.rent.current"
+        self.fact(category="housing", fact_type="status", summary="現在", state="confirmed", fact_key=key, status="current")
+        replacement = self.fact(category="housing", fact_type="status", summary="新候補", fact_key=key)
+        important = self.fact(category="housing", fact_type="schedule", summary="更新予定")
+        ids = [row["id"] for row in app.review_inbox_projection("urgent")["items"]]
+        self.assertEqual(ids[:2], [replacement, important])
+
+    def test_same_priority_oldest_first(self):
+        newer = self.fact(summary="新", created="2026-02-01T00:00:00+00:00")
+        older = self.fact(summary="古", created="2025-12-01T00:00:00+00:00")
+        ids = [row["id"] for row in app.review_inbox_projection("normal")["items"]]
+        self.assertEqual(ids[:2], [older, newer])
+
+    def test_pending_and_deferred_are_separate(self):
+        self.fact(state="pending"); self.fact(summary="あとで", state="deferred")
+        result = app.review_inbox_projection("all")
+        self.assertEqual(result["counts"], {"urgent": 0, "normal": 1, "deferred": 1})
+
+    def test_legacy_deferred_stays_deferred(self):
+        fact_id = self.fact(state="deferred")
+        self.assertEqual(app.review_inbox_projection("deferred")["items"][0]["id"], fact_id)
+
+    def test_future_snoozed_is_hidden_from_today(self):
+        fact_id = self.fact(validation="conflict")
+        future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        with app.db() as connection:
+            connection.execute("UPDATE fact_reviews SET state='deferred' WHERE fact_id=?", (fact_id,))
+            connection.execute("INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at) VALUES(?,?,?)", (fact_id, future, app.now()))
+        self.assertNotEqual(app.action_center_projection()["top_action"].get("id"), fact_id)
+
+    def test_expired_snooze_reappears(self):
+        fact_id = self.fact(validation="conflict", state="deferred")
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        with app.db() as connection:
+            connection.execute("INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at) VALUES(?,?,?)", (fact_id, past, app.now()))
+        self.assertEqual(app.review_inbox_projection("urgent")["items"][0]["id"], fact_id)
+
+    def test_confirmed_disappears(self):
+        self.fact(state="confirmed")
+        self.assertEqual(app.review_inbox_projection("all")["items"], [])
+
+    def test_rejected_disappears(self):
+        self.fact(state="rejected")
+        self.assertEqual(app.review_inbox_projection("all")["items"], [])
+
+    def test_cursor_paginates_without_overlap(self):
+        for index in range(4): self.fact(summary=f"通常{index}")
+        first = app.review_inbox_projection("normal", limit=2)
+        second = app.review_inbox_projection("normal", limit=2, cursor=first["next_cursor"])
+        self.assertTrue({row["id"] for row in first["items"]}.isdisjoint(row["id"] for row in second["items"]))
+
+    def test_domain_filter(self):
+        self.fact(category="travel", summary="旅行")
+        self.fact(category="life", summary="生活")
+        rows = app.review_inbox_projection("normal", domain="travel")["items"]
+        self.assertEqual([row["category"] for row in rows], ["travel"])
+
+    def test_counts_include_all_buckets(self):
+        self.fact(summary="通常")
+        self.fact(summary="緊急", validation="conflict")
+        self.fact(summary="あとで", state="deferred")
+        self.assertEqual(app.review_inbox_projection("urgent")["counts"], {"urgent": 1, "normal": 1, "deferred": 1})
+
+    def test_sensitive_review_masks_summary_value_and_evidence(self):
+        self.fact(category="finance", summary="秘密の金額", value={"amount": 999})
+        item = app.review_inbox_projection("urgent")["items"][0]
+        self.assertEqual((item["summary"], item["value_json"], item["evidence"]), ("機微情報の確認が必要です", "{}", ""))
+
+    def test_migration_is_idempotent(self):
+        app.migrate_action_center_review_inbox(); app.migrate_action_center_review_inbox()
+        with app.db() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version='014_action_center_review_inbox'").fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_migration_preserves_review_rows(self):
+        fact_id = self.fact(state="pending")
+        app.migrate_action_center_review_inbox()
+        with app.db() as connection:
+            state = connection.execute("SELECT state FROM fact_reviews WHERE fact_id=?", (fact_id,)).fetchone()[0]
+        self.assertEqual(state, "pending")
+
+    def test_migration_preserves_legacy_deferred(self):
+        fact_id = self.fact(state="deferred")
+        app.migrate_action_center_review_inbox()
+        with app.db() as connection:
+            self.assertIsNone(connection.execute("SELECT snoozed_until FROM fact_review_queue_state WHERE fact_id=?", (fact_id,)).fetchone())
+
+    def test_decision_snooze_does_not_change_decision_state(self):
+        decision_id = self.decision("executed", "結果待ち")
+        with app.db() as connection:
+            connection.execute("INSERT INTO action_center_snoozes(action_key,keep_in_inbox,updated_at) VALUES(?,?,?)", (f"decision:{decision_id}:decision_result", 1, app.now()))
+        self.assertNotEqual(app.action_center_projection()["top_action"].get("id"), decision_id)
+        with app.db() as connection:
+            state = connection.execute("SELECT decision_state FROM decisions WHERE id=?", (decision_id,)).fetchone()[0]
+        self.assertEqual(state, "executed")
+
+
+if __name__ == "__main__":
+    unittest.main()

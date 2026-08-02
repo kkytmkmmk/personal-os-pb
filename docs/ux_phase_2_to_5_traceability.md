@@ -37,4 +37,16 @@
 | Privacyと推論境界 | finance / relationship / healthを既定マスク、未確認Inference・Recommendation・Simulationを除外 | Timeline unit test | Done |
 | Explore UI・Filter・Cursor・Detail | `static/visualization.js` / `explore-timeline` / shared Sheet | `test_timeline_ui.py` / Browser E2E | Done |
 | 今日からの導線と今と比べる | `daily-ux.js`、比較Promptの下書きのみ | Browser E2E | Done |
+
+## Phase B-UX1: Today Action Center＋確認Inbox
+
+| 要件 | 実装 | 検証 | 状態 |
+|---|---|---|---|
+| Todayの主Actionを1件へ統合 | `action_center_projection()` / `GET /api/action-center` / `static/action-center.js` | Backend unit / Desktop・Mobile Browser E2E | Done |
+| Draft・保存失敗を最優先 | `sessionStorage`のDraft検出とClient override | UI static / Browser E2E | Done |
+| 確認候補を決定的に分類 | `review_inbox_projection()` / urgent・normal・deferred | 25 backend tests / 50件超backlog E2E | Done |
+| Snoozeとlegacy deferred保護 | `fact_review_queue_state` / `PATCH /api/facts/{id}/review` | Unit / Reloadを含むMobile E2E | Done |
+| Focus Mode・機微情報Mask | `static/action-center.js` | Desktop・Mobile Screenshot / Browser assertion | Done |
+| 管理操作の分離 | 管理画面の閉じた「記憶メンテナンス」 | UI static / Screenshot | Done |
+| 公開画面証跡 | 6枚の追加Synthetic ScreenshotとManifest | 39枚を実画像で目視し、Hash付き承認 / Screenshot Safety PASS | Done |
 - 相談の不足情報は最大3件で、Factを自動作成しない。

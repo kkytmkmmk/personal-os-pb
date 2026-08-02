@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 from personal_os.ingest import detect_image_mime, multipart_file, multipart_form_file
 from personal_os.llm_ollama import OllamaClient
+from personal_os.moneyforward import moneyforward_projection
 from personal_os.ocr import extract_text as extract_ocr_text, is_sufficient as ocr_is_sufficient
 
 ROOT = Path(__file__).resolve().parent
@@ -49,6 +50,7 @@ DEFAULT_DB_PATH = (
 DB_PATH = Path(os.environ.get("PERSONAL_OS_DB_PATH", str(DEFAULT_DB_PATH))).resolve()
 BACKUP_DIR = Path(os.environ.get("PERSONAL_OS_BACKUP_DIR", str(DB_PATH.parent / "backups"))).resolve()
 ATTACHMENT_DIR = Path(os.environ.get("PERSONAL_OS_ATTACHMENT_DIR", str(DB_PATH.parent / "attachments"))).resolve()
+MONEYFORWARD_DB_PATH = os.environ.get("PERSONAL_OS_MONEYFORWARD_DB_PATH", "").strip()
 # Browser acceptance tests can request a bounded, verification-only response
 # delay to capture the real submitting UI. Production never reads this value.
 try:
@@ -57,7 +59,10 @@ except ValueError:
     E2E_CHAT_DELAY_SECONDS = 0.0
 ANALYSIS_THREAD_LOCK = threading.Lock()
 ANALYSIS_PREFILTER_LOCK = threading.Lock()
+# Kept as a single-scope compatibility signal for isolated test/runtime
+# callers; the set below correctly tracks multiple configured providers.
 ANALYSIS_PREFILTER_SCOPE: tuple[str, str, str] | None = None
+ANALYSIS_PREFILTER_SCOPES: set[tuple[str, str, str]] = set()
 RUNTIME_INSTANCE_ID = uuid.uuid4().hex
 RUNTIME_LEASE_SECONDS = 75
 RUNTIME_LEASED = False
@@ -954,6 +959,30 @@ def correct_fact(fact_id: int, payload: dict[str, object]) -> dict[str, object]:
 
 
 def initialize() -> None:
+    global ANALYSIS_PREFILTER_SCOPE
+    queue_analysis_on_start = os.environ.get(
+        "PERSONAL_OS_QUEUE_ANALYSIS_ON_START", "true"
+    ).strip().lower() != "false"
+    run_startup_maintenance = os.environ.get(
+        "PERSONAL_OS_RUN_STARTUP_MAINTENANCE", "true"
+    ).strip().lower() != "false"
+    if not run_startup_maintenance and DB_PATH.is_file():
+        with db() as connection:
+            existing_tables = {
+                str(row["name"])
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+        required_tables = {
+            "entries", "documents", "chunks", "facts", "fact_evidence",
+            "analysis_jobs", "runtime_leases", "app_settings", "decisions",
+            "fact_review_queue_state", "action_center_snoozes",
+        }
+        if required_tables <= existing_tables:
+            for provider in extraction_providers():
+                scope = (provider, provider_model(provider, "extract"), PROMPT_VERSION)
+                ANALYSIS_PREFILTER_SCOPES.add(scope)
+                ANALYSIS_PREFILTER_SCOPE = scope
+            return
     with db() as connection:
         connection.executescript(
             """
@@ -1468,6 +1497,24 @@ def initialize() -> None:
               FOREIGN KEY(fact_id) REFERENCES facts(id)
             );
             CREATE INDEX IF NOT EXISTS idx_fact_reviews_state ON fact_reviews(state);
+            CREATE TABLE IF NOT EXISTS fact_review_queue_state (
+              fact_id INTEGER PRIMARY KEY,
+              snoozed_until TEXT,
+              last_presented_at TEXT,
+              presentation_count INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(fact_id) REFERENCES facts(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fact_review_queue_snoozed
+              ON fact_review_queue_state(snoozed_until, updated_at);
+            CREATE TABLE IF NOT EXISTS action_center_snoozes (
+              action_key TEXT PRIMARY KEY,
+              snoozed_until TEXT,
+              keep_in_inbox INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_action_center_snoozes_until
+              ON action_center_snoozes(snoozed_until, updated_at);
             CREATE TABLE IF NOT EXISTS embeddings (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               chunk_id INTEGER NOT NULL,
@@ -1686,21 +1733,42 @@ def initialize() -> None:
         except sqlite3.OperationalError:
             pass
         seed_memory_categories(connection)
-        reclassify_generic_reference_facts(connection)
+        if run_startup_maintenance:
+            reclassify_generic_reference_facts(connection)
         record_schema_migrations(connection)
+    migrate_action_center_review_inbox()
+    if not run_startup_maintenance:
+        # The schema checks above remain enabled. Large, already-migrated local
+        # databases can defer the full Fact/Evidence re-audit to an explicit
+        # maintenance run without disabling normal workers or later queuing.
+        for provider in extraction_providers():
+            scope = (provider, provider_model(provider, "extract"), PROMPT_VERSION)
+            ANALYSIS_PREFILTER_SCOPES.add(scope)
+            ANALYSIS_PREFILTER_SCOPE = scope
+        return
     migrate_memory_layers()
-    prepare_conversation_reanalysis()
+    prepare_conversation_reanalysis(queue_jobs=queue_analysis_on_start)
     backfill_fact_keys()
     migrate_current_truth()
     migrate_visualization_benchmark()
     migrate_decision_replay()
+    migrate_action_center_review_inbox()
     backfill_fact_evidence()
     with db() as connection:
         backfill_fact_evidence_identities(connection)
     auto_confirm_low_risk_facts()
     audit_memory_quality()
     reevaluate_finance_transactions()
-    queue_analysis_jobs()
+    if queue_analysis_on_start:
+        queue_analysis_jobs()
+    else:
+        # Existing jobs remain runnable; only the expensive full startup scan
+        # is skipped. New chunks still pass through the local prefilter when a
+        # later queue operation sees them.
+        for provider in extraction_providers():
+            scope = (provider, provider_model(provider, "extract"), PROMPT_VERSION)
+            ANALYSIS_PREFILTER_SCOPES.add(scope)
+            ANALYSIS_PREFILTER_SCOPE = scope
 
 
 def json_bytes(payload: object) -> bytes:
@@ -2757,7 +2825,7 @@ def repair_memory_state(reason: str = "manual") -> dict[str, object]:
         raise
 
 
-def prepare_conversation_reanalysis() -> dict[str, int]:
+def prepare_conversation_reanalysis(*, queue_jobs: bool = True) -> dict[str, int]:
     """Create turn-level source revisions and quarantine coarse ChatGPT Facts.
 
     Nothing is deleted.  Facts whose provenance points to an inactive legacy
@@ -2795,7 +2863,7 @@ def prepare_conversation_reanalysis() -> dict[str, int]:
                 reason="粗い会話チャンクをPersonal OSの検索対象から隔離", source="resegmentation",
             )
             quarantined += 1
-    queued = queue_analysis_jobs()
+    queued = queue_analysis_jobs() if queue_jobs else 0
     return {"documents": resegmented, "quarantined": quarantined, "queued": queued}
 
 
@@ -3259,6 +3327,37 @@ def migrate_decision_replay() -> None:
         connection.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)", ("013_decision_replay", now()))
 
 
+def migrate_action_center_review_inbox() -> None:
+    """Add display-only queue metadata without rewriting review history."""
+    with db() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS fact_review_queue_state (
+              fact_id INTEGER PRIMARY KEY,
+              snoozed_until TEXT,
+              last_presented_at TEXT,
+              presentation_count INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(fact_id) REFERENCES facts(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fact_review_queue_snoozed
+              ON fact_review_queue_state(snoozed_until, updated_at);
+            CREATE TABLE IF NOT EXISTS action_center_snoozes (
+              action_key TEXT PRIMARY KEY,
+              snoozed_until TEXT,
+              keep_in_inbox INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_action_center_snoozes_until
+              ON action_center_snoozes(snoozed_until, updated_at);
+            """
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)",
+            ("014_action_center_review_inbox", now()),
+        )
+
+
 def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
     """Project local benchmark data with an explicit, conservative comparison contract."""
     with db() as connection:
@@ -3353,7 +3452,7 @@ def benchmark_projection(metric_key: str | None = None) -> dict[str, object]:
                                    "percentile_band": benchmark_percentile_band(latest.get("distribution"), personal_value)})
             item["comparison"] = comparison
     return {"series": series, "statistic_types": sorted(BENCHMARK_STAT_TYPES),
-            "privacy": "Reference data stays local. Personal facts are never sent to sources; demo data is excluded from consultation context."}
+            "privacy": "参照データはローカルに保存します。本人のFactを出典元へ送信せず、デモデータは相談時の文脈から除外します。"}
 
 
 def benchmark_compatibility_audit() -> dict[str, object]:
@@ -5347,6 +5446,8 @@ def analysis_content_hash(entry: sqlite3.Row) -> str:
 def _queue_analysis_jobs_for_provider(provider: str) -> int:
     """Queue one idempotent job per active conversation turn/chunk."""
     global ANALYSIS_PREFILTER_SCOPE
+    if ANALYSIS_PREFILTER_SCOPE is None and ANALYSIS_PREFILTER_SCOPES:
+        ANALYSIS_PREFILTER_SCOPES.clear()
     provider = str(provider).lower()
     if provider == "none":
         return 0
@@ -5386,9 +5487,9 @@ def _queue_analysis_jobs_for_provider(provider: str) -> int:
         # Existing queued chunks are also subjected to the same deterministic
         # local gate.  Non-personal reference turns remain in raw/chunk
         # storage but never consume an LLM call or become a memory candidate.
-        if ANALYSIS_PREFILTER_SCOPE != prefilter_scope:
+        if prefilter_scope not in ANALYSIS_PREFILTER_SCOPES:
             with ANALYSIS_PREFILTER_LOCK:
-                if ANALYSIS_PREFILTER_SCOPE != prefilter_scope:
+                if prefilter_scope not in ANALYSIS_PREFILTER_SCOPES:
                     existing_jobs = connection.execute(
                         """SELECT j.id,c.text,e.source
                            FROM analysis_jobs j JOIN chunks c ON c.id=j.source_chunk_id
@@ -5403,6 +5504,7 @@ def _queue_analysis_jobs_for_provider(provider: str) -> int:
                                 "UPDATE analysis_jobs SET status='completed',error='excluded by personal relevance prefilter',finished_at=?,updated_at=? WHERE id=?",
                                 (now(), now(), job["id"]),
                             )
+                    ANALYSIS_PREFILTER_SCOPES.add(prefilter_scope)
                     ANALYSIS_PREFILTER_SCOPE = prefilter_scope
         for row in rows:
             job_kind = "chunk"
@@ -6551,7 +6653,16 @@ def domain_projection(domain: str) -> dict[str, object]:
         "transaction_candidates": transaction_candidates,
     }
     if domain == "money":
-        result["summary"] = _money_summary(facts, transactions)
+        summary = _money_summary(facts, transactions)
+        moneyforward = moneyforward_projection(MONEYFORWARD_DB_PATH)
+        result["moneyforward"] = moneyforward
+        if moneyforward.get("connected"):
+            if moneyforward.get("total_assets") is not None:
+                summary["total_assets"] = moneyforward["total_assets"]
+            if moneyforward.get("breakdown"):
+                summary["breakdown"] = moneyforward["breakdown"]
+            summary["source"] = "moneyforward"
+        result["summary"] = summary
     elif domain == "travel":
         result["summary"] = _travel_summary(facts)
     elif domain == "housing":
@@ -7412,6 +7523,234 @@ def _digest_safe_text(domain: object, text: object, fallback: str) -> str:
     return str(text or fallback)[:120]
 
 
+def _parsed_iso(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _review_snooze_is_future(value: object) -> bool:
+    parsed = _parsed_iso(value)
+    return bool(parsed and parsed > datetime.now(timezone.utc))
+
+
+def _review_bucket(row: dict[str, object], decision_fact_ids: set[int]) -> tuple[str, int, str]:
+    """Classify a review deterministically without changing the Fact."""
+    snoozed_until = row.get("snoozed_until")
+    if str(row.get("review_state") or "") == "deferred":
+        # A finite snooze becomes eligible again after its deadline.  Legacy
+        # deferred rows have no queue metadata and remain deferred forever.
+        if not snoozed_until or _review_snooze_is_future(snoozed_until):
+            return "deferred", 0, "あとで確認するよう指定されています"
+    elif _review_snooze_is_future(snoozed_until):
+        return "deferred", 0, "あとで確認するよう指定されています"
+
+    eligibility = str(row.get("retrieval_eligibility") or "").lower()
+    validation = str(row.get("validation_status") or "").lower()
+    if eligibility == "conflict" or validation == "conflict":
+        return "urgent", 0, "現在の記憶と矛盾する可能性があります"
+    if int(row.get("is_current_replacement") or 0):
+        return "urgent", 1, "現在の情報を更新する可能性があります"
+    if int(row.get("id") or 0) in decision_fact_ids:
+        return "urgent", 2, "相談や判断の根拠として参照された情報です"
+    fact_type = str(row.get("fact_type") or "").lower()
+    value_text = str(row.get("value_json") or "").lower()
+    if fact_type in {"transaction", "asset_balance", "income", "schedule", "plan"} or any(
+        token in value_text for token in ('"amount"', '"date"', '"occurred_on"')
+    ):
+        return "urgent", 3, "金額・日付・予定など現在の状態に影響する情報です"
+    return "normal", 0, str(row.get("review_reason") or row.get("reason") or "根拠を確認して確定できます")
+
+
+def review_inbox_projection(
+    bucket: str = "urgent", domain: str = "", limit: int = 20,
+    cursor: str | None = None, *, mark_presented: bool = False,
+) -> dict[str, object]:
+    """Project pending reviews into deterministic urgent/normal/deferred queues."""
+    if bucket not in {"urgent", "normal", "deferred", "all"}:
+        raise ValueError("Invalid review bucket")
+    limit = max(1, min(int(limit), 100))
+    try:
+        offset = max(0, int(cursor or 0))
+    except (TypeError, ValueError) as error:
+        raise ValueError("Invalid cursor") from error
+    requested_domain = canonical_domain(domain) if domain else ""
+    with db() as connection:
+        decision_fact_ids: set[int] = set()
+        for decision_row in connection.execute("SELECT related_fact_ids_json FROM decisions"):
+            try:
+                decision_fact_ids.update(int(value) for value in json.loads(decision_row[0] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        rows = [dict(row) for row in connection.execute(
+            """SELECT f.id,f.category,f.fact_type,f.fact_key,f.occurred_on,f.value_json,f.summary,
+                      f.confidence,f.truth_confidence,f.subject_scope,f.resolved_entity_type,
+                      f.retrieval_eligibility,f.validation_status,f.extractor,f.extractor_model,
+                      f.prompt_version,f.extracted_at,f.created_at,
+                      (SELECT COUNT(*) FROM fact_evidence fe WHERE fe.fact_id=f.id) AS evidence_count,
+                      COALESCE(c.text,sc.text,'') AS evidence,d.title AS document_title,d.source_created_at,
+                      e.canonical_name AS subject,COALESCE(e.entity_type,f.resolved_entity_type) AS entity_type,
+                      r.state AS review_state,r.reason,r.review_note,q.snoozed_until,q.last_presented_at,
+                      COALESCE(q.presentation_count,0) AS presentation_count,
+                      CASE WHEN EXISTS (
+                        SELECT 1 FROM facts current_fact
+                        JOIN fact_reviews current_review ON current_review.fact_id=current_fact.id
+                        WHERE current_fact.id<>f.id AND current_fact.fact_key=f.fact_key
+                          AND current_fact.status='current' AND current_review.state='confirmed'
+                      ) THEN 1 ELSE 0 END AS is_current_replacement
+               FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+               LEFT JOIN documents d ON d.id=f.document_id
+               LEFT JOIN chunks c ON c.id=f.chunk_id
+               LEFT JOIN chunks sc ON sc.id=f.source_chunk_id
+               LEFT JOIN entities e ON e.id=f.subject_entity_id
+               LEFT JOIN fact_review_queue_state q ON q.fact_id=f.id
+               WHERE r.state IN ('pending','deferred')"""
+        )]
+        projected: list[dict[str, object]] = []
+        counts = {"urgent": 0, "normal": 0, "deferred": 0}
+        bucket_rank = {"urgent": 0, "normal": 1, "deferred": 2}
+        sensitive_domains = {"finance", "relationship", "health"}
+        for row in rows:
+            row_domain = canonical_domain(str(row.get("category") or "other"))
+            if requested_domain and row_domain != requested_domain:
+                continue
+            row_bucket, priority, reason = _review_bucket(row, decision_fact_ids)
+            counts[row_bucket] += 1
+            sensitive = row_domain in sensitive_domains
+            item = {
+                **row,
+                "category": row_domain,
+                "domain_label": _digest_domain_label(row_domain),
+                "bucket": row_bucket,
+                "priority_reason": reason,
+                "sensitive": sensitive,
+                "summary": "機微情報の確認が必要です" if sensitive else str(row.get("summary") or "確認が必要な記憶"),
+                "value_json": "{}" if sensitive else str(row.get("value_json") or "{}"),
+                "evidence": "" if sensitive else str(row.get("evidence") or "")[:1200],
+                "document_title": "非表示" if sensitive else str(row.get("document_title") or "原文"),
+                "_priority": priority,
+                "_sort_time": str(row.get("created_at") or row.get("source_created_at") or ""),
+            }
+            projected.append(item)
+        projected.sort(key=lambda item: (
+            bucket_rank[str(item["bucket"])], int(item["_priority"]),
+            str(item["_sort_time"]), int(item["id"]),
+        ))
+        selected = projected if bucket == "all" else [item for item in projected if item["bucket"] == bucket]
+        page = selected[offset:offset + limit]
+        if mark_presented and page:
+            timestamp = now()
+            for item in page:
+                connection.execute(
+                    """INSERT INTO fact_review_queue_state(fact_id,last_presented_at,presentation_count,updated_at)
+                       VALUES(?,?,1,?) ON CONFLICT(fact_id) DO UPDATE SET
+                       last_presented_at=excluded.last_presented_at,
+                       presentation_count=fact_review_queue_state.presentation_count+1,
+                       updated_at=excluded.updated_at""",
+                    (item["id"], timestamp, timestamp),
+                )
+        for item in page:
+            item.pop("_priority", None)
+            item.pop("_sort_time", None)
+        next_cursor = str(offset + limit) if offset + limit < len(selected) else None
+    return {"items": page, "counts": counts, "next_cursor": next_cursor, "bucket": bucket}
+
+
+def _action_is_snoozed(row: dict[str, object] | None) -> bool:
+    if not row:
+        return False
+    return bool(int(row.get("keep_in_inbox") or 0) or _review_snooze_is_future(row.get("snoozed_until")))
+
+
+def action_center_projection() -> dict[str, object]:
+    """Return exactly one server-side next action and compact status counts."""
+    inbox = review_inbox_projection(bucket="all", limit=100)
+    with db() as connection:
+        decisions = [dict(row) for row in connection.execute(
+            """SELECT id,domain,title,question,decision_state,result,later_evaluation,updated_at,created_at
+               FROM decisions ORDER BY COALESCE(updated_at,created_at) ASC,id ASC"""
+        )]
+        snoozes = {str(row["action_key"]): dict(row) for row in connection.execute("SELECT * FROM action_center_snoozes")}
+        recent_changes = int(connection.execute(
+            "SELECT COUNT(*) FROM memory_changes WHERE created_at>=?", ((datetime.now(timezone.utc)-timedelta(days=7)).isoformat(),)
+        ).fetchone()[0])
+        confirmed_facts = int(connection.execute(
+            """SELECT COUNT(*) FROM facts f JOIN fact_reviews r ON r.fact_id=f.id
+               WHERE r.state='confirmed' AND f.status IN ('current','historical')
+                 AND COALESCE(f.retrieval_eligibility,'pending')='eligible'"""
+        ).fetchone()[0])
+
+    candidates: list[tuple[int, str, dict[str, object]]] = []
+    result_waiting = evaluation_waiting = 0
+    decision_priority = {"executed": 2, "result": 3, "decided": 7, "candidate": 8, "considered": 8}
+    for row in decisions:
+        state = str(row.get("decision_state") or "").lower()
+        if state == "executed" and not str(row.get("result") or "").strip():
+            result_waiting += 1
+            action_type, label, reason = "decision_result", "結果を記録する", "実行済みの判断に結果がまだ記録されていません"
+        elif state == "result" and not str(row.get("later_evaluation") or "").strip():
+            evaluation_waiting += 1
+            action_type, label, reason = "decision_evaluation", "後日評価を記録する", "結果を残した判断の振り返りがまだです"
+        elif state == "decided":
+            action_type, label, reason = "decision_execute", "判断を確認する", "決めた内容の実行状況を確認できます"
+        elif state in {"candidate", "considered"}:
+            action_type, label, reason = "decision_choose", "判断を進める", "選択待ちの判断があります"
+        else:
+            continue
+        action_key = f"decision:{int(row['id'])}:{action_type}"
+        if _action_is_snoozed(snoozes.get(action_key)):
+            continue
+        domain = canonical_domain(str(row.get("domain") or "other"))
+        title = _digest_safe_text(domain, row.get("title") or row.get("question"), f"{_digest_domain_label(domain)}の判断")
+        candidates.append((decision_priority[state], str(row.get("updated_at") or row.get("created_at") or ""), {
+            "key": action_key, "kind": action_type, "id": int(row["id"]), "title": title,
+            "reason": reason, "action_label": label, "route": "decisions", "domain": domain,
+            "can_snooze": True,
+        }))
+
+    urgent = [item for item in inbox["items"] if item["bucket"] == "urgent"]
+    normal = [item for item in inbox["items"] if item["bucket"] == "normal"]
+    for priority, collection in ((4, urgent[:1]), (6, normal[:1])):
+        for item in collection:
+            candidates.append((priority, str(item.get("source_created_at") or item.get("created_at") or ""), {
+                "key": f"fact:{int(item['id'])}:review", "kind": "fact_review", "id": int(item["id"]),
+                "title": str(item["summary"]), "reason": str(item["priority_reason"]),
+                "action_label": "確認する", "route": "verify", "domain": str(item["category"]),
+                "bucket": str(item["bucket"]), "can_snooze": True,
+            }))
+    if candidates:
+        candidates.sort(key=lambda value: (value[0], value[1], int(value[2].get("id") or 0)))
+        top_action = candidates[0][2]
+    elif confirmed_facts:
+        top_action = {
+            "key": "consultation:start", "kind": "consultation", "title": "今の記憶を使って相談する",
+            "reason": "確認済みの記憶を次の判断に活かせます", "action_label": "相談する",
+            "route": "chat", "domain": "other", "can_snooze": False,
+        }
+    else:
+        top_action = {
+            "key": "record:start", "kind": "record", "title": "最初の記録を残す",
+            "reason": "記録が増えると相談や判断の根拠として使えます", "action_label": "記録する",
+            "route": "home", "domain": "other", "can_snooze": False,
+        }
+    return {
+        "top_action": top_action,
+        "status_counts": {
+            "urgent_reviews": int(inbox["counts"]["urgent"]),
+            "normal_reviews": int(inbox["counts"]["normal"]),
+            "deferred_reviews": int(inbox["counts"]["deferred"]),
+            "result_waiting": result_waiting,
+            "evaluation_waiting": evaluation_waiting,
+            "recent_changes": recent_changes,
+        },
+    }
+
+
 def today_digest() -> dict[str, object]:
     """Return a bounded, evidence-backed daily overview without creating memory.
 
@@ -7549,10 +7888,12 @@ def today_digest() -> dict[str, object]:
         {"domain": domain, "text": text, "basis": []}
         for domain, text in prompt_catalog if domain in available_domains
     ][:3]
+    action_center = action_center_projection()
     return {
         "headline": {"text": headline, "basis": headline_basis[:3], "period": "recent"},
         "next_actions": next_actions[:3], "recent_changes": recent_changes[:3], "remember": remember[:2],
         "consultation_prompts": consultation_prompts,
+        **action_center,
     }
 
 
@@ -8035,6 +8376,7 @@ class Handler(BaseHTTPRequestHandler):
             "/app.js": ("app.js", "application/javascript; charset=utf-8"),
             "/visualization.js": ("visualization.js", "application/javascript; charset=utf-8"),
             "/daily-ux.js": ("daily-ux.js", "application/javascript; charset=utf-8"),
+            "/action-center.js": ("action-center.js", "application/javascript; charset=utf-8"),
         }
         if path in static_files:
             filename, content_type = static_files[path]
@@ -8131,6 +8473,20 @@ class Handler(BaseHTTPRequestHandler):
                        ORDER BY COALESCE(f.occurred_on,f.created_at) DESC LIMIT 200"""
                 )]
             return self.send_json(rows)
+        if path == "/api/action-center":
+            return self.send_json(action_center_projection())
+        if path == "/api/review-inbox":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                return self.send_json(review_inbox_projection(
+                    bucket=str(query.get("bucket", ["urgent"])[0]),
+                    domain=str(query.get("domain", [""])[0]),
+                    limit=int(query.get("limit", [20])[0]),
+                    cursor=query.get("cursor", [None])[0],
+                    mark_presented=True,
+                ))
+            except (TypeError, ValueError) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/facts/review":
             with db() as connection:
                 rows = [dict(row) for row in connection.execute(
@@ -8488,6 +8844,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(today_digest())
         if path == "/api/today":
             return self.send_json(today_snapshot())
+        if path == "/api/integrations/moneyforward":
+            return self.send_json(moneyforward_projection(MONEYFORWARD_DB_PATH))
         cycle_match = re.fullmatch(r"/api/cycles/(\d+)", path)
         if cycle_match:
             cycle = cycle_snapshot(int(cycle_match.group(1)))
@@ -8573,6 +8931,30 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if not self._authorize(True):
             return
+        if path == "/api/action-center/snooze":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                action_key = str(payload.get("action_key") or "").strip()[:200]
+                defer_for = str(payload.get("defer_for") or "").strip()
+                if not action_key or defer_for not in {"one_day", "one_week", "indefinite"}:
+                    raise ValueError("Invalid action snooze")
+                deadline = None
+                if defer_for == "one_day":
+                    deadline = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+                elif defer_for == "one_week":
+                    deadline = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+                with db() as connection:
+                    connection.execute(
+                        """INSERT INTO action_center_snoozes(action_key,snoozed_until,keep_in_inbox,updated_at)
+                           VALUES(?,?,?,?) ON CONFLICT(action_key) DO UPDATE SET
+                           snoozed_until=excluded.snoozed_until,keep_in_inbox=excluded.keep_in_inbox,
+                           updated_at=excluded.updated_at""",
+                        (action_key, deadline, 1 if defer_for == "indefinite" else 0, now()),
+                    )
+                return self.send_json({"message": "Deferred", "action_key": action_key, "snoozed_until": deadline})
+            except (ValueError, json.JSONDecodeError) as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         if path == "/api/benchmarks/preview":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -9441,6 +9823,9 @@ class Handler(BaseHTTPRequestHandler):
                 state = str(payload["state"])
                 if state not in {"pending", "confirmed", "rejected", "deferred"}:
                     raise ValueError("Invalid review state")
+                defer_for = str(payload.get("defer_for") or "indefinite")
+                if state == "deferred" and defer_for not in {"one_day", "one_week", "indefinite"}:
+                    raise ValueError("Invalid defer period")
                 note = str(payload.get("note", ""))[:1000]
                 with db() as connection:
                     cursor = connection.execute(
@@ -9448,6 +9833,23 @@ class Handler(BaseHTTPRequestHandler):
                         (state, "ユーザー確認済み" if state == "confirmed" else "ユーザー却下" if state == "rejected" else "ユーザー保留",
                          note or "ユーザー操作", now() if state in {"confirmed", "rejected"} else None, fact_id),
                     )
+                    if cursor.rowcount:
+                        if state == "deferred":
+                            deadline = None
+                            if defer_for == "one_day":
+                                deadline = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+                            elif defer_for == "one_week":
+                                deadline = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+                            connection.execute(
+                                """INSERT INTO fact_review_queue_state(fact_id,snoozed_until,updated_at)
+                                   VALUES(?,?,?) ON CONFLICT(fact_id) DO UPDATE SET
+                                   snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at""",
+                                (fact_id, deadline, now()),
+                            )
+                        elif state == "pending":
+                            connection.execute("DELETE FROM fact_review_queue_state WHERE fact_id=?", (fact_id,))
+                        else:
+                            connection.execute("DELETE FROM fact_review_queue_state WHERE fact_id=?", (fact_id,))
                     if cursor.rowcount and state in {"confirmed", "rejected"}:
                         if state == "confirmed":
                             sync_finance_transaction(connection, fact_id, confirmed=True)
@@ -9456,9 +9858,9 @@ class Handler(BaseHTTPRequestHandler):
                                 "UPDATE finance_transactions SET eligibility_state='excluded',eligibility_reason='fact_rejected',validated_at=? WHERE fact_id=?",
                                 (now(), fact_id),
                             )
-                if not cursor.rowcount:
-                    return self.send_json({"error": "Not found"}, 404)
-                quality = apply_memory_quality_to_fact(connection, fact_id, source="manual_review")
+                    if not cursor.rowcount:
+                        return self.send_json({"error": "Not found"}, 404)
+                    quality = apply_memory_quality_to_fact(connection, fact_id, source="manual_review")
                 return self.send_json({"message": "Reviewed", "quality": quality})
             except (KeyError, ValueError, json.JSONDecodeError) as error:
                 return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
@@ -9678,7 +10080,7 @@ if __name__ == "__main__":
         )
         raise SystemExit(2)
     port = APP_PORT
-    migration_backup = backup_before_migration("013_decision_replay")
+    migration_backup = backup_before_migration("014_action_center_review_inbox")
     initialize()
     acquired, existing = acquire_runtime_lease(port)
     if not acquired:

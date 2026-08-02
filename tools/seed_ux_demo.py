@@ -70,6 +70,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", required=True, type=Path)
     parser.add_argument("--replace", action="store_true", help="Replace an existing approved verification database")
+    parser.add_argument("--profile", choices=("standard", "review-backlog"), default="standard")
     args = parser.parse_args()
     try:
         db_path = validate_seed_target(args.db, environment=os.environ.get("PERSONAL_OS_ENV"))
@@ -88,6 +89,9 @@ def main() -> int:
     import app  # Imported only after the isolated database environment is set.
 
     app.initialize()
+    # Browser verification must never start a real extraction provider after
+    # its capture journey creates a new analysis job.
+    app.save_setting("analysis_paused", "true")
     stamp = "2026-07-29T10:00:00+09:00"
 
     def columns(connection, table: str) -> set[str]:
@@ -238,6 +242,56 @@ def main() -> int:
             "decision_id": replay_decision_id, "plan_id": None, "event_type": "executed", "summary": "User completed the sample trip.",
             "source_entry_id": None, "source_chunk_id": None, "occurred_at": "2026-07-03", "created_at": "2026-07-03T12:00:00+09:00",
         })
+        if args.profile == "review-backlog":
+            def review_fact(index: int, *, category: str = "life", state: str = "pending",
+                            eligibility: str = "pending", validation: str = "pending",
+                            fact_type: str = "preference", fact_key: str | None = None,
+                            status: str = "unknown", summary: str | None = None) -> int:
+                created = f"2026-06-{(index % 28) + 1:02d}T08:00:00+09:00"
+                fact_id = insert(connection, "facts", {
+                    "document_id": document_id, "chunk_id": chunk_id, "source_chunk_id": chunk_id,
+                    "subject_scope": "self", "resolved_entity_type": "unknown", "personal_relevance": "personal",
+                    "retrieval_eligibility": eligibility, "validation_status": validation,
+                    "category": category, "fact_type": fact_type,
+                    "fact_key": fact_key or f"{category}.{fact_type}.review-{index}",
+                    "value_json": json.dumps({"choice": f"Synthetic {index}"}, ensure_ascii=False),
+                    "summary": summary or f"合成確認項目 {index}", "confidence": 0.58,
+                    "truth_confidence": 0.58, "extractor": "synthetic-fixture", "extractor_model": "none",
+                    "prompt_version": "ux-review-backlog-v1", "extracted_at": created,
+                    "created_at": created, "status": status,
+                })
+                insert(connection, "fact_reviews", {
+                    "fact_id": fact_id, "state": state, "reason": "Synthetic review backlog",
+                    "review_note": "No personal data", "created_at": created,
+                })
+                insert(connection, "fact_evidence", {
+                    "fact_id": fact_id, "evidence_kind": "synthetic", "source_chunk_id": chunk_id,
+                    "source_group": "ux-review-backlog", "source_identity": f"synthetic-review-{index}",
+                    "quote": f"これは合成確認項目 {index} の明示Evidenceです。", "support": "supports",
+                    "reliability": 1.0, "created_at": created,
+                })
+                return fact_id
+
+            # Five explicit conflicts.
+            for index in range(1, 6):
+                review_fact(index, eligibility="conflict", validation="conflict", summary=f"矛盾を確認する合成記憶 {index}")
+            # Thirty-five ordinary reviews. Five are sensitive and therefore
+            # remain masked in default API/UI responses.
+            for index in range(6, 41):
+                review_fact(index, category="relationship" if index < 11 else "life",
+                            summary=f"合成の明示記憶 {index}")
+            # Fifteen legacy deferred reviews intentionally have no snooze
+            # deadline; only the user can resume them.
+            for index in range(41, 56):
+                review_fact(index, state="deferred", summary=f"あとで確認する合成記憶 {index}")
+            # Five current-replacement candidates, each backed by a confirmed
+            # current Fact with the same normalized key.
+            for index in range(56, 61):
+                key = f"housing.preference.synthetic-{index}"
+                review_fact(index + 100, category="housing", state="confirmed", fact_key=key,
+                            status="current", summary=f"現在の合成住居条件 {index}")
+                review_fact(index, category="housing", fact_key=key,
+                            summary=f"更新候補の合成住居条件 {index}")
         connection.commit()
     print(f"Synthetic UX demo database created: {db_path}")
     return 0

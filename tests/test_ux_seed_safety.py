@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -81,3 +82,22 @@ class UxSeedSafetyTests(unittest.TestCase):
         )
         self.assertNotEqual(protected.returncode, 0)
         self.assertEqual(self.production.read_bytes(), protected_before)
+
+    def test_review_backlog_profile_is_large_and_bucketed(self):
+        target = self.temp_root / "ux-synthetic.db"
+        environment = os.environ.copy()
+        environment["PERSONAL_OS_ENV"] = "verification"
+        command = [sys.executable, str(Path(__file__).parents[1] / "tools" / "seed_ux_demo.py"),
+                   "--db", str(target), "--profile", "review-backlog"]
+        result = subprocess.run(command, env=environment, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        connection = sqlite3.connect(target)
+        try:
+            pending = connection.execute("SELECT COUNT(*) FROM fact_reviews WHERE state='pending'").fetchone()[0]
+            deferred = connection.execute("SELECT COUNT(*) FROM fact_reviews WHERE state='deferred'").fetchone()[0]
+            conflicts = connection.execute("SELECT COUNT(*) FROM facts WHERE validation_status='conflict'").fetchone()[0]
+        finally:
+            connection.close()
+        self.assertGreaterEqual(pending + deferred, 50)
+        self.assertGreaterEqual(deferred, 15)
+        self.assertGreaterEqual(conflicts, 5)

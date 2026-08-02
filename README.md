@@ -18,6 +18,17 @@ See [the personal change Timeline guide](docs/change_timeline.md) for the read-o
 See [Decision Replay](docs/decision_replay.md) for the evidence-backed decision lifecycle, and [first real use](docs/first_real_use.md) before importing personal history.
 See the [Decision Replay visual review](docs/decision_replay_visual_review.md) for the synthetic verification screens and approval process.
 
+## Today Action Center and review inbox
+
+- Today shows exactly one next action, its reason, and one primary operation. Browser drafts and failed saves take priority over server-side result, evaluation, review, execution and decision queues.
+- The review inbox separates urgent, normal and deferred candidates, uses deterministic oldest-first ordering, and supports one-day, one-week and indefinite snooze without changing the underlying Fact lifecycle.
+- Sensitive review summaries and evidence are masked by default. Maintenance and bulk repair tools stay under the closed management section.
+- See [Today Action Center](docs/action_center.md), [review inbox](docs/review_inbox.md), and [first real use](docs/first_real_use.md).
+
+![Synthetic desktop Action Center](docs/screenshots/ux-phase5/desktop-1280-action-center.png)
+
+![Synthetic mobile review inbox](docs/screenshots/ux-phase5/mobile-390-review-inbox.png)
+
 ## Decision Replay and first use
 
 - Decision Replay keeps consultation recommendations separate from the user's own decision, execution, result and later evaluation. Viewing a replay never writes a Fact or Decision.
@@ -73,6 +84,22 @@ cd personal-os
 ```
 
 本番は `data/personal_os.db` と固定ポート `8787` を使用します。ブラウザで `http://localhost:8787` を開きます。同一 Wi-Fi の iPhone からは、起動時に表示される LAN URL を Safari で開いてください。PWA マニフェストと Service Worker を含むため、Safari の「ホーム画面に追加」も利用できます。
+
+### Money Forwardローカル連携
+
+`mf-dashboard`で取得したローカルSQLite DBを、Personal OSの資産画面から読み取り専用で参照できます。DBやログイン情報はコピーせず、Money Forward側が更新されるたびに次回表示へ反映されます。
+
+プロジェクト直下のGit管理外`.env`へ次を設定し、`tools/start_production.ps1`で再起動します。
+
+```text
+PERSONAL_OS_MONEYFORWARD_DB_PATH=C:\absolute\path\to\moneyforward.db
+```
+
+接続状態は `GET /api/integrations/moneyforward`、統合結果は `GET /api/domains/money` で確認できます。API応答にはDBパス・Money ForwardのグループID・口座IDを含めません。
+
+既存の解析ジョブが大量にキュー済みで起動時再走査が長い場合だけ、`.env`へ `PERSONAL_OS_QUEUE_ANALYSIS_ON_START=false` を追加できます。既存ジョブのWorker処理と、新しく追加した記録の解析キューは停止しません。
+
+すでに移行済みの大容量DBで起動時の全Fact再監査も省略する場合は、`PERSONAL_OS_RUN_STARTUP_MAINTENANCE=false` を指定できます。既存DBに必須テーブルが揃っていることを読み取り確認して高速起動し、不足時は通常のスキーマ処理へ戻ります。全件修復や新しいDB migrationが必要なときは一度 `true` に戻して起動します。
 
 ## データモデル
 

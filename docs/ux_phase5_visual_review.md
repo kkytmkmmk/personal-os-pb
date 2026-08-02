@@ -16,6 +16,24 @@
 
 ![Mobile 今日のダイジェスト](screenshots/ux-phase5/mobile-390-today-digest.png)
 
+## Phase B-UX1: Today Action Centerと確認Inbox
+
+![Desktop Action Center](screenshots/ux-phase5/desktop-1280-action-center.png)
+
+![Desktop 確認Inbox](screenshots/ux-phase5/desktop-1280-review-inbox.png)
+
+![Desktop Focus確認](screenshots/ux-phase5/desktop-1280-review-focus.png)
+
+![Mobile Action Center](screenshots/ux-phase5/mobile-390-action-center.png)
+
+![Mobile 確認Inbox](screenshots/ux-phase5/mobile-390-review-inbox.png)
+
+![Mobile 保留メニュー](screenshots/ux-phase5/mobile-390-review-snooze.png)
+
+50件以上の固定Synthetic Backlogで確認した。Todayは主Actionが1件、主Buttonが1件で、記録・相談・確認Inboxの3入口が最初のMobile Viewportに収まる。Inboxは10件の重要候補、35件の通常候補、15件の保留候補を本文一覧として積み上げず、先頭1件のFocus Cardを表示する。根拠と技術情報は閉じた状態で、機微候補は本文と原文Previewをマスクする。
+
+目視確認では、非同期で追加されるカテゴリ監査がInboxへ入り込む問題と、Mobileの保留メニューが下部Navigationに隠れる問題を発見した。カテゴリ監査は管理の記憶メンテナンスへ移動し、保留メニューは下部Navigationより上へ表示するよう修正した。人口ベンチマークの補助文・金額・時間単位も通常画面では日本語表示へ統一した。
+
 ![Desktop Personal Space](screenshots/ux-phase5/desktop-1280-explore-space.png)
 
 ![Mobile 人口ベンチマーク](screenshots/ux-phase5/mobile-390-benchmark.png)

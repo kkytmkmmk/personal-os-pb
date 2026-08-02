@@ -158,6 +158,24 @@ form[data-submitting="true"] { opacity: .88; }
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
 
+/* Phase B-UX1: Today Action Center and Review Inbox */
+.action-center-card{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:linear-gradient(145deg,#172722,#17201f)}
+.action-center-kicker{font-size:.76rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:8px}
+.action-center-card h2{font-size:clamp(1.25rem,3vw,1.7rem);margin-bottom:6px}
+.action-reason,.review-reason{margin:0;color:var(--muted);line-height:1.6}
+.action-center-buttons{margin-top:18px}.action-center-buttons>button:first-child{min-width:160px}
+.action-defer-menu,.review-defer-menu{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;padding:10px;background:#101716;border-radius:10px}
+.action-defer-menu.hidden,.review-defer-menu.hidden{display:none}
+.action-status,.review-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.action-status span,.review-counts span{display:inline-flex;align-items:baseline;gap:5px;padding:6px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.78rem}
+.action-status b,.review-counts b{color:var(--accent);font-size:1rem}
+.action-inbox-link{margin:10px 0 0}.action-center-card .quick-actions{padding-top:12px;border-top:1px solid var(--line)}
+.review-inbox-card>.entry-head{align-items:center}.review-tabs{display:flex;gap:8px;overflow-x:auto;margin:16px 0 10px;padding-bottom:3px}.review-tabs button{white-space:nowrap}
+.review-filter{max-width:260px;margin:10px 0 14px}.review-card{border:1px solid var(--line);border-radius:13px;padding:15px;margin:12px 0;background:#101716}.review-focus-card{border-color:var(--accent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 25%,transparent)}
+.review-domain{display:block;color:var(--accent);font-size:.76rem;font-weight:800;margin-bottom:5px}.review-card h3{margin:0;font-size:1rem}.review-card details{margin-top:10px}.review-card summary{cursor:pointer;color:var(--muted)}
+.review-actions>button{min-height:44px}.maintenance-details>summary{display:flex;justify-content:space-between;gap:12px;cursor:pointer}.maintenance-details:not([open])>summary{margin:0}
+@media(max-width:600px){.action-center-card{margin-top:8px}.action-center-buttons>button{flex:1}.action-status{gap:5px}.action-status span{padding:5px 7px}.review-counts{margin-top:8px}.review-inbox-card>.entry-head{display:block}.review-tabs{margin-left:-4px;margin-right:-4px}.review-actions{display:grid;grid-template-columns:1fr 1fr}.review-actions>button{width:100%}.review-defer-menu:not(.hidden){position:fixed;z-index:70;left:12px;right:12px;bottom:calc(74px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr;padding:14px;border:1px solid var(--accent);box-shadow:0 14px 40px #000;background:var(--panel)}.review-defer-menu:not(.hidden)::before{content:'いつ確認しますか？';font-weight:800;margin-bottom:2px}.review-defer-menu button{min-height:44px;width:100%}}
+
 .diagnostics-pre{max-height:22rem;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:.78rem;background:var(--panel,#0b1413);padding:.75rem;border-radius:.5rem}
 form[data-action-state="submitting"]{opacity:.88}
 form[data-action-state="error"]{outline:1px solid #d97777}

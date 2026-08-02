@@ -25,9 +25,9 @@ if (-not (Test-Path -LiteralPath $verificationDatabase)) {
 }
 
 Write-Host "Personal OS verification: http://localhost:8877"
-$lanAddress = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-    Select-Object -First 1 -ExpandProperty IPAddress
+$lanAddress = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+    Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and $_.IPAddressToString -notlike '127.*' -and $_.IPAddressToString -notlike '169.254.*' } |
+    Select-Object -First 1 -ExpandProperty IPAddressToString
 if ([string]::IsNullOrWhiteSpace($lanAddress)) { $lanAddress = '127.0.0.1' }
 Write-Host "iPhone (same Wi-Fi): http://${lanAddress}:8877"
 Push-Location $projectRoot
