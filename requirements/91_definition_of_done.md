@@ -98,3 +98,13 @@ Population BenchmarkをDoneとするには、少なくとも以下を満たす�
 - Difference / Ratio / Distribution Marker等で乖離を理解できる
 
 固定された平均値を画面に置くだけではDoneにしない。
+
+## 13. Daily Action Center Acceptance
+
+Daily Action CenterをDoneとするには、Today最上部の主Actionが最大1件であり、Action理由が表示され、記録・相談をすぐ開始できること。DraftがServer候補より優先され、保存失敗後の入力を失わず、Current Fact全件一覧および確認候補全件がTodayの主要表示にないこと。Mobile初期Viewportで主Action・記録・相談を確認できること。
+
+## 14. Review Inbox Acceptance
+
+Review InboxをDoneとするには、Urgent・Normal・Deferredが区別され、初期表示がUrgentであること。ランダム順を使用せず、同じ状態なら同じ順番になること。Focus Modeで1件ずつ処理でき、Snooze後は期限前にTodayへ再表示されず、Reload後も維持されること。
+
+さらに、`confirmed`・`rejected`はQueueから除外され、legacy `deferred`が自動的に`pending`化されず、技術情報は初期状態で閉じていること。管理・修復操作をInboxに置かず、50件以上のSynthetic BacklogでDesktop/Mobile E2Eが成功し、Sensitive本文をPublic Screenshotへ出さないこと。

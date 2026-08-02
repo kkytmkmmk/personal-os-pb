@@ -144,3 +144,18 @@ Phase 2 implementation intentionally leaves `requirements/` unchanged because it
 | Candidate continuity | `/api/chat` IDs and exact candidate save path | `test_candidate_is_saved_as_displayed` | Done |
 | Versioned service-worker shell | `personal-os-v3-reliability-1`, `/api-client.js` in shell | `test_service_worker_refreshes_phase2_assets` | Done |
 | Full mobile/PC/auth/unavailable-LLM E2E matrix | Browser automation and slow-network fixtures | Browser control layer currently fails click execution with `SyntaxError`; static/API coverage remains | Partial |
+
+## Phase B-UX1 requirements baseline (2026-08-02)
+
+| 要件 | 現在状態 | 実装 | 検証 |
+|---|---|---|---|
+| Today主Action最大1件 | Not implemented | 未実装 | 未実施 |
+| Action理由と後で | Not implemented | 未実装 | 未実施 |
+| Review Inbox Bucket分離 | Not implemented | 未実装 | 未実施 |
+| ランダム順廃止 | Not implemented | 現在はランダム要素あり | 未実施 |
+| Snooze期限保持 | Not implemented | 既存deferredのみ | 未実施 |
+| Focus Mode | Not implemented | 未実装 | 未実施 |
+| 管理操作の分離 | Partial | 管理Menuはあるが確認画面に混在 | 未実施 |
+| 大量Backlog Acceptance | Not implemented | 未実装 | 未実施 |
+
+本節は要件ベースラインであり、今回の文書更新によって実装状態やDone判定を変更しない。

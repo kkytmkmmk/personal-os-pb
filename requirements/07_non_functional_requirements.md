@@ -92,7 +92,13 @@ Timeline、Entity、Finance、AI推測、Hypothetical、Assistant contamination�
 
 Done判定は `91_definition_of_done.md` に従う。
 
-## 15. TBD
+## 15. 確認Backlogのスケーラビリティ（2026-08-02）
+
+50件以上の確認候補でもTodayには最大1件だけを表示し、初期Inbox表示は限定件数とする。全件一括取得を標準にせず、同一状態に対する並び順は再現可能とする。Reloadで候補順が不必要に変動せず、Snoozeした候補は期限前に再提示されないこと。
+
+候補総数が増えても、初期画面のDOM量が無制限に増えないこと。Production DBを自動E2Eで開かないこと。具体的なレスポンスタイム数値はTBDとする。
+
+## 16. TBD
 
 以下は今後具体化する。
 

@@ -200,3 +200,9 @@ Rawを削除せずCorrection履歴を追跡できること。
 ## 17. 実装詳細は設計文書へ分離する
 
 具体的カラム名、テーブル構造、Current判定アルゴリズム等は設計文書で定義する。
+
+## 18. 確認状態と提示状態を分離する（2026-08-02）
+
+`confirmed`、`rejected`、`pending`、`deferred`はFact確認の意味状態とする。Snooze、最終表示日時、再表示期限、表示履歴はUI提示状態とする。SnoozeだけでFactの信頼状態を変更せず、`deferred`を自動的に`pending`へ戻さない。再表示期限後の提示再開は許可する。
+
+Queue表示履歴はFactやEvidenceの内容を上書きしない。表示優先度は現在のFact状態から再計算可能とする。具体的なTable名・Column名は設計文書で決定する。

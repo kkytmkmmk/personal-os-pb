@@ -156,6 +156,12 @@ Local Firstの通常相談と、ユーザーが明示的に押す「ChatGPTで�
 
 3D Personal SpaceとPopulation Benchmarkは、Today / 相談 / 記憶 / 判断のPrimary Flowを阻害しないSecondary Experienceとして扱う。
 
+## Today Action Center / Review Inbox 正本（2026-08-02）
+
+本節はDaily Action Centerと確認Inboxに関する、既存vNext節より新しい正本とする。Today最上部の主Actionは最大1件とし、理由と「後で」を付ける。記録・相談は最初のViewportから開始可能とし、TodayにCurrent Fact全件や確認候補全件を表示しない。
+
+確認Inboxの初期表示は重要候補とし、ランダム順を使用しない。`pending`と`deferred`を初期表示で混在させず、ConfidenceやExtractorを通常Cardへ常時表示しない。Focus Modeを標準操作とし、管理・修復操作は確認Inboxから分離する。週次レビューと確認Inboxの名称を区別する。Mobile 390×844では主Action・記録・相談が最初のViewportに入ること。
+
 初期Navigation案:
 
 ```text
